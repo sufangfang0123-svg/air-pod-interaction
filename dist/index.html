@@ -253,6 +253,9 @@
   .taskbar .footer-privacy{color:#7adfb3;}
   .toast{position:fixed;right:22px;bottom:22px;z-index:10020;max-width:min(360px,calc(100vw - 28px));padding:12px 15px;border:1px solid var(--cyan-dim);background:rgba(5,12,25,.96);box-shadow:0 14px 44px rgba(0,0,0,.5),0 0 24px rgba(54,228,255,.1);color:#e8f7ff;font-size:13px;line-height:1.5;transform:translateY(18px);opacity:0;pointer-events:none;transition:.2s ease;}
   .toast.show{transform:translateY(0);opacity:1;}
+  body.runtime-active::before,body.runtime-active::after{display:none;}
+  body.runtime-active .window{backdrop-filter:none;}
+  body.runtime-active .cam-stage{box-shadow:none;}
   @media (max-width:1040px){
     .windows-row{grid-template-columns:1fr;}
     .window.side .play-panel{max-width:none;}
@@ -266,6 +269,7 @@
     .toolbar{align-items:stretch;flex-direction:column;}
     .mode-actions{justify-content:flex-start;}
     .mode-switch{display:grid;grid-template-columns:1fr 1fr;flex:1;}
+    .hand-mode-switch{grid-template-columns:repeat(3,1fr);}
     .mode-switch button{width:100%;padding-inline:8px;}
     .quick-steps{grid-template-columns:1fr;}
     .quick-steps li{min-height:31px;}
@@ -320,8 +324,9 @@
               <button id="modeInst" class="mode-btn active" aria-pressed="true">🎹 空气乐器 <kbd>1</kbd></button>
               <button id="modePaint" class="mode-btn" aria-pressed="false">✨ 粒子绘画 <kbd>2</kbd></button>
             </span>
-            <span class="mode-switch" title="快捷键 H：分工=副手切功能；独立=双手同时创作" aria-label="选择双手模式">
-              <button id="dualSplit" class="mode-btn active" aria-pressed="true">双手·分工</button>
+            <span class="mode-switch hand-mode-switch" title="单手更流畅；双手模式会增加识别负担。快捷键 H 循环切换" aria-label="选择手势模式">
+              <button id="singleHand" class="mode-btn active" aria-pressed="true">单手·流畅</button>
+              <button id="dualSplit" class="mode-btn" aria-pressed="false">双手·分工</button>
               <button id="dualDual" class="mode-btn" aria-pressed="false">双手·独立</button>
             </span>
           </div>
@@ -381,7 +386,7 @@
           </div>
           <div style="font-size:12px;color:#7f97b0;line-height:1.7;" id="instTip"></div>
           <div style="font-size:12px;color:#7f97b0;line-height:1.7;margin-top:6px;">
-            双手（H 切换）：<b>分工</b>＝主手（青环）弹奏不停，<b style="color:#ff9ec4">副手（品红虚环）</b>捏一下换音色、握拳 0.6 秒换音阶；
+            手势模式（H 循环）：<b>单手·流畅</b>适合日常演示；<b>双手·分工</b>＝主手（青环）弹奏不停，<b style="color:#ff9ec4">副手（品红虚环）</b>捏一下换音色、握拳 0.6 秒换音阶；
             <b>独立</b>＝两只手各弹各的音，可同时按出双音/和弦（条带副手位置品红高亮）。
           </div>
         </div>
@@ -415,7 +420,7 @@
           <div style="font-size:12px;color:#7f97b0;line-height:1.7;">
             只伸<b style="color:#c9dcec;">食指</b>（其他手指弯曲）= 落笔，松开其余手指自然抬笔；<br>
             捏合/C=换色，<b>B</b>=循环画笔，<b>Z</b>=撤销一笔；<b>握拳保持 0.6 秒</b>=清屏；<b>张掌保持 0.5 秒</b>=保存 PNG（保持手势期间有进度环，防误触）。<br>
-            双手（H 切换）：<b>分工</b>＝主手作画不停，<b style="color:#ff9ec4">副手</b>捏一下换色、握拳 0.6 秒换画笔；<b>独立</b>＝两只手各画一笔，可双手同时作画。
+            手势模式（H 循环）：<b>单手·流畅</b>适合日常创作；<b>双手·分工</b>＝主手作画不停，<b style="color:#ff9ec4">副手</b>捏一下换色、握拳 0.6 秒换画笔；<b>双手·独立</b>＝两只手各画一笔。
           </div>
         </div>
 
@@ -485,8 +490,8 @@
           </div>
         </div>
         <div class="checks" style="margin-top:8px;">
-          <label><input type="checkbox" id="cOneHand"> 单手模式（更快更稳；取消=双手，主手青环可操作、副手品红虚环）</label>
-          <label><input type="checkbox" id="cEnhance" checked> 启用画面增强</label>
+          <label><input type="checkbox" id="cOneHand" checked> 单手性能模式（更快更稳；关闭后启用双手识别）</label>
+          <label><input type="checkbox" id="cEnhance"> 暗光时启用画面增强（会增加性能负担）</label>
           <button id="btnApplyModel">应用检测参数（重建模型，约1秒）</button>
           <span style="font-size:12px;color:#7f97b0;">排查顺序：开灯补光 → 整只手入镜留边距 → 手与衣袖/背景拉开颜色 → 手别贴边/别太近</span>
         </div>
@@ -529,13 +534,15 @@ const procCanvas=document.createElement('canvas');
 const proc2d=procCanvas.getContext('2d');
 // 识别质量统计（滚动 1s 窗口）
 const qStat={frames:0,lost:0,start:0,pct:0};
+const perfStat={detectMs:0,skeletonTick:0,slowWindows:0,noticeShown:false};
 const statusEl=$('status'), stateBadge=$('stateBadge'), coordBadge=$('coordBadge'), camHint=$('camHint');
 const startBtn=$('startBtn'), stopBtn=$('stopBtn'), stageTip=$('stageTip');
 const noteBig=$('noteBig'), seqEl=$('seq'), audioState=$('audioState');
 const pressCountEl=$('pressCount'), releaseCountEl=$('releaseCount'), readout=$('readout');
 const panelInst=$('panelInst'), panelPaint=$('panelPaint');
 const modeInstBtn=$('modeInst'), modePaintBtn=$('modePaint');
-const dualSplitBtn=$('dualSplit'), dualDualBtn=$('dualDual');
+const singleHandBtn=$('singleHand'), dualSplitBtn=$('dualSplit'), dualDualBtn=$('dualDual');
+const advancedWindow=document.querySelector('.advanced-window');
 const toastEl=$('toast');
 let toastTimer=null;
 function showToast(message){
@@ -552,12 +559,13 @@ const CFG = {
   fistHoldMs:600,     // 握拳保持多久清屏（防误删）
   palmHoldMs:500,     // 张掌保持多久保存（防误下载）
   // 弱场景鲁棒性参数
-  numHands:2,         // 双手识别（主手交互+副手显示/后续功能）；勾选「单手模式」回退为 1
+  numHands:1,         // 默认单手优先保证流畅；主动切双手模式时重建为 2
   minDetect:0.5,      // 手掌检测置信度（重建模型生效）
   minTrack:0.5,       // 关键点跟踪置信度（重建模型生效）
-  enhance:true,       // 送模型前做亮度/对比度增强，改善低对比/昏暗场景
+  enhance:false,      // 暗光时手动开启；默认关闭，避免每帧额外复制与滤镜处理
   contrast:1.20, brightness:1.06,
-  stageW:640, stageH:480
+  stageW:640, stageH:480,
+  inferW:480, inferH:360
 };
 function bindSlider(sliderId,valId,key,fmt=v=>v){
   const s=$(sliderId),v=$(valId);
@@ -573,6 +581,7 @@ bindSlider('sEnter','vEnter','pinchEnter',v=>v.toFixed(2));
 bindSlider('sExit','vExit','pinchExit',v=>v.toFixed(2));
 bindSlider('sInterval','vInterval','minClickMs',v=>v.toFixed(0));
 const showSkel=$('cSkel'), showBands=$('cBands'), showLink=$('cLink');
+showSkel.addEventListener('change',()=>{ if(!showSkel.checked) sctx.clearRect(0,0,CFG.stageW,CFG.stageH); });
 
 /* ---------- 2. 工具 ---------- */
 const clamp=(v,lo,hi)=>Math.min(hi,Math.max(lo,v));
@@ -1497,7 +1506,7 @@ function drawSkeleton(result){
 // 按下锁位按手分离：main 主手 / sec 副手（独立模式双手各锁各的）
 const locks={main:{x:null,y:null},sec:{x:null,y:null}};
 // 双手配合模式：split=分工（副手切功能，B），dual=独立（双手各自弹奏/作画，A）
-let dualMode='split';
+let dualMode='single';
 const ripples=[];
 let pressCount=0, releaseCount=0;
 let holdLabel='', holdProgress=0;   // 握拳/张掌保持反馈（0~1）
@@ -1622,6 +1631,8 @@ function drawCalib(){
 }
 let lastHudTs=0;
 function drawHud(now){
+  if(now-lastHudTs<100) return;
+  lastHudTs=now;
   if(app==='paint'){
     stateBadge.textContent = !hand.present&&now-hand.lostAt>=CFG.freezeMs?'未检测到手'
       : `绘画 · ${hand.gesture==='None'?(hand.pointing?'落笔中':'抬笔'):hand.gesture} · ${Paint.custom?'自选色':PALETTE[Paint.colorIdx].n}`;
@@ -1629,21 +1640,21 @@ function drawHud(now){
     stateBadge.textContent = !hand.present&&now-hand.lostAt>=CFG.freezeMs?'未检测到手'
       : (hand.pinch==='pinched'?'● 捏合 / 弹奏中':'○ 张开 / 移动');
   }
-  stateBadge.textContent+=' · '+(dualMode==='dual'?'双手独立':'双手分工');
+  stateBadge.textContent+=' · '+(dualMode==='single'?'单手流畅':dualMode==='dual'?'双手独立':'双手分工');
   if(hand2.present) stateBadge.textContent+=' · 已识别副手';
   coordBadge.textContent=`x:${(hand.x*CFG.stageW).toFixed(0)} y:${(hand.y*CFG.stageH).toFixed(0)} · ${hand.detectFps.toFixed(0)}fps`;
-  if(now-lastHudTs<200) return;
-  lastHudTs=now;
   pressCountEl.textContent=pressCount; releaseCountEl.textContent=releaseCount;
+  if(!advancedWindow.open) return;
   const hint=qualityHint();
   readout.textContent=
     `app=${app} gesture=${hand.gesture} pointing=${hand.pointing} pinch=${hand.pinch}\n`+
     `raw=(${hand.rawX.toFixed(3)},${hand.rawY.toFixed(3)}) smooth=(${hand.x.toFixed(3)},${hand.y.toFixed(3)}) px=(${(hand.x*CFG.stageW).toFixed(1)},${(hand.y*CFG.stageH).toFixed(1)})\n`+
-    `r=${hand.ratio.toFixed(3)} enter=${CFG.pinchEnter.toFixed(2)} exit=${CFG.pinchExit.toFixed(2)} detect=${hand.detectFps.toFixed(1)}fps`+
+    `r=${hand.ratio.toFixed(3)} enter=${CFG.pinchEnter.toFixed(2)} exit=${CFG.pinchExit.toFixed(2)} detect=${hand.detectFps.toFixed(1)}fps / ${perfStat.detectMs.toFixed(0)}ms`+
     ` 置信度=${hand.score===null?'-':hand.score.toFixed(2)} 手掌占比=${(Math.max(hand.bw,hand.bh)*100).toFixed(0)}% 丢帧=${(hand.lossPct*100).toFixed(0)}%${hint?'\n⚠ '+hint:''}`;
 }
 // 识别质量诊断：按优先级返回一条可执行建议
 function qualityHint(){
+  if(hand.detectFps>0&&hand.detectFps<18) return '性能偏低：优先使用“单手·流畅”，并关闭骨架与画面增强';
   if(hand.lossPct>0.4) return '丢帧过多：开灯补光、让手和背景/衣袖拉开颜色对比';
   if(!hand.present) return '';
   if(hand.bw>0.8||hand.bh>0.85) return '手掌占画面过大，手离摄像头远一点';
@@ -1706,19 +1717,30 @@ const SecondHand={
 };
 
 /* ---------- 17. 主循环：检测相位写状态，渲染相位读状态 ---------- */
-let rafId=null, stream=null, running=false, lastVideoTime=-1, lastFrameTs=performance.now();
+let rafId=null, stream=null, running=false, lastVideoTime=-1, lastFrameTs=performance.now(), lastOverlayTs=0;
 let detectFrames=0, detectWinStart=performance.now();
 /* 双手配合模式切换：split 分工（默认，副手切功能）/ dual 独立（双手各弹各画） */
-function setDualMode(m){
-  if(m!=='split'&&m!=='dual') return;
+async function setDualMode(m){
+  if(!['single','split','dual'].includes(m)) return;
+  if(building){ showToast('识别模型正在初始化，请稍后再切换模式'); return; }
+  const previousHands=CFG.numHands;
   dualMode=m;
+  CFG.numHands=m==='single'?1:2;
+  $('cOneHand').checked=CFG.numHands===1;
+  singleHandBtn.classList.toggle('active',m==='single');
   dualSplitBtn.classList.toggle('active',m==='split');
   dualDualBtn.classList.toggle('active',m==='dual');
+  singleHandBtn.setAttribute('aria-pressed',String(m==='single'));
   dualSplitBtn.setAttribute('aria-pressed',String(m==='split'));
   dualDualBtn.setAttribute('aria-pressed',String(m==='dual'));
   Instrument.glideEnd('sec'); Paint.endStroke('sec');   // 切换瞬间收掉副手未完成的音/笔
   locks.sec.x=locks.sec.y=null;
+  if(recognizer&&previousHands!==CFG.numHands){
+    showToast(m==='single'?'正在切换到单手流畅模式':'正在启用双手识别，性能占用会增加');
+    await applyModelChange();
+  }
 }
+singleHandBtn.addEventListener('click',()=>setDualMode('single'));
 dualSplitBtn.addEventListener('click',()=>setDualMode('split'));
 dualDualBtn.addEventListener('click',()=>setDualMode('dual'));
 /* 一只手的乐器交互（按手独立：各自锁位、各自语音/滑音） */
@@ -1755,14 +1777,27 @@ function frame(now){
       let detectSource=video;
       if(CFG.enhance){
         proc2d.filter=`brightness(${CFG.brightness}) contrast(${CFG.contrast})`;
-        proc2d.drawImage(video,0,0,CFG.stageW,CFG.stageH);
+        proc2d.drawImage(video,0,0,CFG.inferW,CFG.inferH);
         proc2d.filter='none';
         detectSource=procCanvas;
       }
+      const detectStarted=performance.now();
       const res=recognizer.recognizeForVideo(detectSource,now);
-      drawSkeleton(res);
+      const detectCost=performance.now()-detectStarted;
+      perfStat.detectMs=perfStat.detectMs?perfStat.detectMs*.82+detectCost*.18:detectCost;
+      perfStat.skeletonTick++;
+      const skeletonStride=perfStat.detectMs>38?2:1;
+      if(showSkel.checked&&perfStat.skeletonTick%skeletonStride===0) drawSkeleton(res);
       detectFrames++;
-      if(now-detectWinStart>=1000){ hand.detectFps=detectFrames*1000/(now-detectWinStart); detectFrames=0; detectWinStart=now; }
+      if(now-detectWinStart>=1000){
+        hand.detectFps=detectFrames*1000/(now-detectWinStart);
+        perfStat.slowWindows=hand.detectFps<18?perfStat.slowWindows+1:0;
+        if(perfStat.slowWindows>=2&&!perfStat.noticeShown){
+          perfStat.noticeShown=true;
+          showToast(dualMode==='single'?'当前设备帧率偏低，可在高级设置关闭骨架':'双手识别占用较高，切到“单手·流畅”会明显改善');
+        }
+        detectFrames=0; detectWinStart=now;
+      }
       // 滚动 1s 丢帧率
       qStat.frames++;
       if(!qStat.start) qStat.start=now;
@@ -1836,7 +1871,11 @@ function frame(now){
     }
     updatePaintGestures(dt);
   }
-  drawOverlay(now); drawCalib(); drawHud(now);
+  if(now-lastOverlayTs>=32){
+    drawOverlay(now); lastOverlayTs=now;
+    if(advancedWindow.open) drawCalib();
+  }
+  drawHud(now);
   rafId=requestAnimationFrame(frame);
 }
 
@@ -1889,25 +1928,28 @@ async function start(){
     const [,,cam]=await Promise.all([
       recognizer?Promise.resolve(recognizer):buildRecognizer(),
       Instrument.unlock().catch(e=>console.warn('音频解锁失败（仍可先用光标/绘画）：',e)),
-      navigator.mediaDevices.getUserMedia({video:{width:{ideal:640},height:{ideal:480},frameRate:{ideal:30}},audio:false})
+      navigator.mediaDevices.getUserMedia({video:{width:{ideal:CFG.inferW,max:CFG.stageW},height:{ideal:CFG.inferH,max:CFG.stageH},frameRate:{ideal:30,max:30}},audio:false})
     ]);
     stream=cam;
     video.srcObject=stream; await video.play();
     skelCanvas.width=overlay.width=CFG.stageW; skelCanvas.height=overlay.height=CFG.stageH;
     paintCanvas.width=CFG.stageW; paintCanvas.height=CFG.stageH;
-    procCanvas.width=CFG.stageW; procCanvas.height=CFG.stageH;
+    procCanvas.width=CFG.inferW; procCanvas.height=CFG.inferH;
     if(Paint.strokes.length) Paint.redraw();
     camHint.style.display='none';
     running=true; lastVideoTime=-1;
+    document.body.classList.add('runtime-active');
     posSmoother.reset(); ratioSmoothed=null; PinchFSM.reset(); Tracker.reset(); resetHand2(); SecondHand.reset();
     qStat.frames=0;qStat.lost=0;qStat.start=0;qStat.pct=0;
+    perfStat.detectMs=0;perfStat.skeletonTick=0;perfStat.slowWindows=0;perfStat.noticeShown=false;
     Object.assign(hand,{present:false,lostAt:0,x:.5,y:.5,rawX:.5,rawY:.5,ratio:1,pinch:'open',gesture:'None',pointing:false,pressEdge:false,releaseEdge:false});
     locks.main.x=locks.main.y=locks.sec.x=locks.sec.y=null; ripples.length=0; pressCount=0; releaseCount=0; Instrument.reset(); Paint.endStroke();
     stopBtn.disabled=false;
     statusEl.textContent='运行中 · 用顶部按钮切换乐器/绘画';
-    detectFrames=0; detectWinStart=performance.now(); lastFrameTs=performance.now();
+    detectFrames=0; detectWinStart=performance.now(); lastFrameTs=performance.now(); lastOverlayTs=0;
     rafId=requestAnimationFrame(frame);
   }catch(err){
+    document.body.classList.remove('runtime-active');
     console.error(err); statusEl.textContent='启动失败';
     camHint.style.display='flex'; setHint(friendlyError(err));
     stopBtn.disabled=true;
@@ -1915,6 +1957,7 @@ async function start(){
 }
 function stop(){
   running=false; cancelAnimationFrame(rafId);
+  document.body.classList.remove('runtime-active');
   if(stream){ stream.getTracks().forEach(t=>t.stop()); stream=null; }
   video.srcObject=null;
   for(const c of [sctx,octx,cctx]) c.clearRect(0,0,CFG.stageW,CFG.stageH);
@@ -1933,7 +1976,7 @@ document.addEventListener('keydown',e=>{
   const k=e.key.toLowerCase();
   if(k==='1') setApp('instrument');
   if(k==='2') setApp('paint');
-  if(k==='h') setDualMode(dualMode==='split'?'dual':'split');
+  if(k==='h') setDualMode(dualMode==='single'?'split':dualMode==='split'?'dual':'single');
   if(app==='instrument'){
     { const ki=INST_KEYS.indexOf(k); if(ki>=0&&INST_META[ki]){ Instrument.setInstrument(INST_META[ki].id);
       Instrument.unlock().then(()=>setTimeout(()=>Instrument.audition(),130)).catch(()=>{}); } }
@@ -1954,7 +1997,8 @@ document.addEventListener('keydown',e=>{
 document.addEventListener('pointerdown',()=>{ if(running&&window.Tone&&(!Instrument.ctrl||window.Tone.context.state!=='running')) Instrument.unlock().catch(()=>{}); });
 
 // 启动前先按舞台口径定好画布内部分辨率（start() 成功后会再设一次；避免未开摄像头/文件直开时画布停留在默认 300×150 裁切笔画）
-for(const c of [skelCanvas,paintCanvas,overlay,procCanvas]){ c.width=CFG.stageW; c.height=CFG.stageH; }
+for(const c of [skelCanvas,paintCanvas,overlay]){ c.width=CFG.stageW; c.height=CFG.stageH; }
+procCanvas.width=CFG.inferW; procCanvas.height=CFG.inferH;
 Paint.initUI();
 setApp('instrument');
 
@@ -1964,7 +2008,7 @@ bindSlider('sTrack','vTrack','minTrack',v=>v.toFixed(2));
 bindSlider('sContrast','vContrast','contrast',v=>v.toFixed(2));
 bindSlider('sBright','vBright','brightness',v=>v.toFixed(2));
 $('cEnhance').addEventListener('change',e=>{ CFG.enhance=e.target.checked; });
-$('cOneHand').addEventListener('change',async e=>{ CFG.numHands=e.target.checked?1:2; await applyModelChange(); });
+$('cOneHand').addEventListener('change',e=>setDualMode(e.target.checked?'single':'split'));
 $('btnApplyModel').addEventListener('click',applyModelChange);
 async function applyModelChange(){
   if(building) return;
