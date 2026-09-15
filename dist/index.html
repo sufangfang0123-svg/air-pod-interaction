@@ -1,0 +1,1981 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta name="description" content="在浏览器里用手势演奏空气乐器、创作粒子画。摄像头画面仅在本机处理，不上传服务器。" />
+<meta name="theme-color" content="#050816" />
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='16' fill='%23050816'/%3E%3Cpath d='M14 38c8-20 16-20 24 0s12 16 14 4' fill='none' stroke='%2322e6ff' stroke-width='6' stroke-linecap='round'/%3E%3Ccircle cx='24' cy='24' r='5' fill='%23ff4d9d'/%3E%3C/svg%3E" />
+<title>空气交互舱 AirPod｜手势乐器与粒子绘画</title>
+<!-- 视觉风格 A：全息 HUD（无外部 CSS 框架，全部样式自建，离线友好） -->
+<style>
+  :root{
+    --bg:#05080f; --panel:rgba(9,17,31,.82); --panel-solid:#09111f;
+    --cyan:#22e6ff; --cyan-dim:rgba(34,230,255,.28); --cyan-faint:rgba(34,230,255,.10);
+    --magenta:#ff4d9d; --txt:#c9dcec; --txt-dim:#7f97b0; --mono:Consolas,'Cascadia Mono',monospace;
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;}
+  body{
+    color:var(--txt);
+    font-family:'Segoe UI','Microsoft YaHei',Tahoma,sans-serif;
+    padding:18px;min-height:100vh;
+    background:
+      radial-gradient(900px 500px at 15% -10%,rgba(34,230,255,.08),transparent 60%),
+      radial-gradient(800px 480px at 95% 0%,rgba(122,43,255,.10),transparent 55%),
+      linear-gradient(var(--bg),var(--bg));
+    background-color:var(--bg);
+  }
+  /* 全局极淡网格 + 扫描线（装饰，不抢内容） */
+  body::before{
+    content:'';position:fixed;inset:0;pointer-events:none;z-index:9999;
+    background-image:
+      repeating-linear-gradient(0deg,rgba(34,230,255,.025) 0 1px,transparent 1px 3px);
+    mix-blend-mode:screen;
+  }
+  body::after{
+    content:'';position:fixed;inset:0;pointer-events:none;z-index:9998;
+    background-image:
+      linear-gradient(rgba(34,230,255,.035) 1px,transparent 1px),
+      linear-gradient(90deg,rgba(34,230,255,.035) 1px,transparent 1px);
+    background-size:44px 44px;
+    mask-image:radial-gradient(ellipse at 50% 0%,#000 0%,transparent 75%);
+  }
+  [hidden]{display:none !important;}
+  .desktop{max-width:1240px;margin:0 auto;display:flex;flex-direction:column;gap:14px;position:relative;z-index:1;}
+  .windows-row{display:flex;flex-wrap:wrap;gap:14px;align-items:stretch;}
+  .windows-row > .window{flex:2 1 560px;min-width:340px;}
+  .windows-row > .window.side{flex:1 1 300px;min-width:280px;}
+
+  /* ============ HUD 面板：青色细描边 + 四角括号 ============ */
+  .window{
+    position:relative;background:var(--panel);border:1px solid var(--cyan-dim);
+    backdrop-filter:blur(10px);
+    box-shadow:0 12px 44px rgba(0,0,0,.55),inset 0 0 36px rgba(34,230,255,.03);
+    clip-path:polygon(0 12px,12px 0,calc(100% - 12px) 0,100% 12px,100% calc(100% - 12px),calc(100% - 12px) 100%,12px 100%,0 calc(100% - 12px));
+  }
+  .window::after{ /* 四角科技括号 */
+    content:'';position:absolute;inset:0;pointer-events:none;
+    background:
+      linear-gradient(var(--cyan),var(--cyan)) left 0 top 0/16px 2px no-repeat,
+      linear-gradient(var(--cyan),var(--cyan)) left 0 top 0/2px 16px no-repeat,
+      linear-gradient(var(--cyan),var(--cyan)) right 0 top 0/16px 2px no-repeat,
+      linear-gradient(var(--cyan),var(--cyan)) right 0 top 0/2px 16px no-repeat,
+      linear-gradient(var(--cyan),var(--cyan)) left 0 bottom 0/16px 2px no-repeat,
+      linear-gradient(var(--cyan),var(--cyan)) left 0 bottom 0/2px 16px no-repeat,
+      linear-gradient(var(--cyan),var(--cyan)) right 0 bottom 0/16px 2px no-repeat,
+      linear-gradient(var(--cyan),var(--cyan)) right 0 bottom 0/2px 16px no-repeat;
+    opacity:.75;
+  }
+  .title-bar{
+    display:flex;align-items:center;gap:10px;padding:9px 14px;
+    border-bottom:1px solid rgba(34,230,255,.16);
+    background:linear-gradient(90deg,rgba(34,230,255,.10),transparent 65%);
+  }
+  .title-bar-text{
+    font-size:11.5px;letter-spacing:2.5px;color:#bfefff;font-weight:600;text-transform:uppercase;
+  }
+  .title-bar-text::before{content:'◤ ';color:var(--cyan);}
+  .title-bar-controls{display:none;}
+  .window-body{padding:13px 14px 15px;}
+
+  /* ============ 通用控件 ============ */
+  button{
+    font-family:inherit;font-size:13px;letter-spacing:.5px;color:#d6f4ff;cursor:pointer;
+    background:linear-gradient(180deg,rgba(34,230,255,.12),rgba(34,230,255,.04));
+    border:1px solid var(--cyan-dim);padding:7px 13px;
+    clip-path:polygon(0 0,calc(100% - 7px) 0,100% 7px,100% 100%,7px 100%,0 calc(100% - 7px));
+    transition:box-shadow .15s,background .15s,color .15s;
+  }
+  button:hover:not(:disabled){background:rgba(34,230,255,.22);box-shadow:0 0 14px rgba(34,230,255,.35);color:#fff;}
+  button:active:not(:disabled){background:var(--cyan);color:#04121d;}
+  button:disabled{opacity:.38;cursor:not-allowed;}
+  button.mode-btn.active{background:var(--cyan);color:#04121d;font-weight:700;box-shadow:0 0 16px rgba(34,230,255,.55);border-color:var(--cyan);}
+  kbd{font:inherit;font-size:11px;opacity:.65;margin-left:3px;}
+  input[type=range]{width:100%;accent-color:var(--cyan);height:16px;}
+  input[type=checkbox]{accent-color:var(--cyan);width:14px;height:14px;}
+
+  /* ============ 舞台 ============ */
+  .cam-stage{
+    position:relative;width:100%;aspect-ratio:4/3;overflow:hidden;
+    background:#02060d;border:1px solid rgba(34,230,255,.2);
+  }
+  .cam-stage video,.cam-stage canvas{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;}
+  .mirror{transform:scaleX(-1);}
+  #paintCanvas{pointer-events:none;z-index:2;}
+  #overlayCanvas{pointer-events:none;z-index:3;}
+  #skelCanvas{pointer-events:none;z-index:1;}
+  #video{z-index:0;}
+  .hud{
+    position:absolute;z-index:5;padding:4px 10px;font-size:12.5px;letter-spacing:1px;
+    background:rgba(2,10,20,.72);border:1px solid var(--cyan-dim);color:var(--cyan);
+    font-family:var(--mono);font-weight:bold;
+    clip-path:polygon(0 0,calc(100% - 6px) 0,100% 6px,100% 100%,6px 100%,0 calc(100% - 6px));
+  }
+  .hud.left{top:10px;left:10px;}
+  .hud.right{top:10px;right:10px;color:#9fe8ff;border-color:rgba(159,232,255,.3);}
+  .stage-tip{
+    position:absolute;left:10px;bottom:10px;z-index:5;max-width:76%;
+    background:rgba(2,10,20,.66);border-left:2px solid var(--cyan);color:#bfe6f5;
+    font-size:12.5px;line-height:1.6;padding:5px 10px;
+  }
+  .cam-hint{
+    position:absolute;inset:0;z-index:6;display:flex;align-items:center;justify-content:center;
+    color:#cfe6f5;text-align:center;padding:18px;font-size:14px;line-height:1.9;
+    background:radial-gradient(circle at 50% 45%,rgba(34,230,255,.05),transparent 70%);
+  }
+  .cam-hint a{color:var(--cyan);}
+  .cam-hint code{color:#9fe8ff;background:rgba(34,230,255,.1);border:1px solid var(--cyan-dim);padding:1px 5px;font-family:var(--mono);word-break:break-all;}
+
+  /* ============ 右侧应用面板 ============ */
+  .play-panel{display:flex;flex-direction:column;gap:11px;padding:2px;}
+  .note-big{
+    font-size:62px;font-weight:bold;text-align:center;line-height:1.1;letter-spacing:2px;
+    background:radial-gradient(circle at 50% 30%,rgba(34,230,255,.12),rgba(2,8,16,.9));
+    color:var(--cyan);border:1px solid var(--cyan-dim);padding:16px 0;
+    font-family:var(--mono);text-shadow:0 0 18px rgba(34,230,255,.6);transition:transform .1s;
+  }
+  .note-big.pop{transform:scale(1.1);}
+  .seq{display:flex;flex-wrap:wrap;gap:4px;min-height:30px;}
+  .seq span{
+    background:rgba(34,230,255,.12);border:1px solid var(--cyan-dim);color:#cff6ff;
+    font-size:12px;padding:2px 8px;font-family:var(--mono);
+  }
+  .kv{font-size:13px;line-height:2;color:var(--txt);}
+  .kv b{font-family:var(--mono);color:#e6f8ff;}
+  .ok{color:#3dffa8;font-weight:bold;text-shadow:0 0 10px rgba(61,255,168,.5);}
+  .warn{color:#ffb347;font-weight:bold;}
+  .mode-switch{margin-left:auto;display:flex;gap:7px;}
+
+  .color-row{display:flex;align-items:center;gap:12px;}
+  .swatch{width:46px;height:46px;border:1px solid var(--cyan-dim);box-shadow:0 0 14px rgba(34,230,255,.25);background:#ff5c8a;}
+  .palette-row{display:flex;flex-wrap:wrap;gap:6px;}
+  /* HSL 光谱取色板 */
+  .picker-box{border:1px solid rgba(34,230,255,.18);padding:8px;background:rgba(2,8,18,.5);}
+  .spec-canvas{width:100%;height:108px;display:block;border:1px solid rgba(34,230,255,.25);cursor:crosshair;touch-action:none;}
+  .sat-row{display:flex;align-items:center;gap:9px;font-size:11.5px;color:var(--txt-dim);margin-top:7px;letter-spacing:1px;}
+  .sat-row input{flex:1;}
+  #satVal{font-family:var(--mono);color:var(--cyan);width:40px;text-align:right;}
+  .pal{width:25px;height:25px;border:1px solid rgba(255,255,255,.25);cursor:pointer;transition:transform .1s;}
+  .pal:hover{transform:scale(1.12);}
+  .pal.sel{outline:2px solid var(--cyan);outline-offset:2px;box-shadow:0 0 10px rgba(34,230,255,.6);}
+  .btn-row{display:flex;flex-wrap:wrap;gap:7px;}
+  /* 乐器库选择器 */
+  .pick-label{font-size:11px;color:var(--txt-dim);letter-spacing:1.5px;margin-bottom:6px;}
+  .pick-grid{display:flex;flex-wrap:wrap;gap:6px;}
+  button.pick{font-size:12px;padding:5px 10px;background:rgba(34,230,255,.05);letter-spacing:.5px;}
+  button.pick.active{background:var(--cyan);color:#04121d;font-weight:700;box-shadow:0 0 12px rgba(34,230,255,.5);border-color:var(--cyan);}
+
+  /* ============ 调试区 ============ */
+  .debug-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:10px 18px;}
+  .ctl label{font-size:12.5px;color:var(--txt-dim);display:flex;justify-content:space-between;gap:8px;margin-bottom:2px;}
+  .ctl .v{font-family:var(--mono);color:var(--cyan);}
+  .readout{
+    font-family:var(--mono);font-size:12.5px;line-height:1.8;white-space:pre-wrap;
+    background:#020812;color:#7fe9ff;padding:10px 12px;border:1px solid rgba(34,230,255,.2);
+    box-shadow:inset 0 0 24px rgba(34,230,255,.05);
+  }
+  .checks{display:flex;flex-wrap:wrap;gap:15px;font-size:13px;align-items:center;color:var(--txt);}
+  #calibCanvas{width:100%;height:42px;background:#020812;border:1px solid rgba(34,230,255,.2);display:block;}
+  .toolbar{display:flex;gap:9px;flex-wrap:wrap;align-items:center;margin-bottom:12px;}
+  .status{font-size:12.5px;color:#9fe8ff;font-family:var(--mono);letter-spacing:.5px;}
+
+  /* 底部状态条 */
+  .taskbar{
+    margin-top:2px;display:flex;align-items:center;gap:14px;flex-wrap:wrap;
+    background:rgba(9,17,31,.8);border:1px solid var(--cyan-dim);padding:8px 14px;font-size:12px;
+    font-family:var(--mono);color:var(--txt-dim);letter-spacing:1px;
+  }
+  .taskbar button{padding:4px 12px;}
+  .clock{margin-left:auto;color:var(--cyan);}
+  code{font-family:var(--mono);background:rgba(34,230,255,.1);padding:1px 5px;color:#cff6ff;}
+  ::selection{background:rgba(34,230,255,.3);}
+
+  /* ============ 产品化界面优化 ============ */
+  :root{
+    --bg:#040612; --panel:rgba(9,15,30,.88); --panel-solid:#090f1e;
+    --cyan:#36e4ff; --cyan-dim:rgba(54,228,255,.30); --cyan-faint:rgba(54,228,255,.08);
+    --magenta:#ff5aa7; --txt:#e7f4fb; --txt-dim:#91a9bd;
+  }
+  html{color-scheme:dark;scroll-behavior:smooth;}
+  body{padding:22px;background:
+    radial-gradient(900px 540px at 8% -8%,rgba(54,228,255,.13),transparent 62%),
+    radial-gradient(760px 520px at 98% 4%,rgba(122,43,255,.13),transparent 58%),
+    linear-gradient(180deg,#040612 0%,#060a16 62%,#03050c 100%);}
+  body::before{opacity:.45;}
+  body::after{opacity:.48;}
+  .desktop{max-width:1420px;gap:16px;}
+  .site-header{display:flex;align-items:center;justify-content:space-between;gap:18px;padding:4px 4px 8px;}
+  .brand{display:flex;align-items:center;gap:13px;min-width:0;}
+  .brand-mark{width:46px;height:46px;flex:0 0 46px;display:grid;place-items:center;border:1px solid var(--cyan-dim);background:linear-gradient(145deg,rgba(54,228,255,.15),rgba(255,90,167,.08));box-shadow:inset 0 0 22px rgba(54,228,255,.08),0 0 28px rgba(54,228,255,.08);clip-path:polygon(0 10px,10px 0,100% 0,100% calc(100% - 10px),calc(100% - 10px) 100%,0 100%);}
+  .brand-mark svg{width:29px;height:29px;}
+  .brand h1{font-size:clamp(20px,2.4vw,30px);line-height:1.1;letter-spacing:.02em;margin:0;color:#fff;}
+  .brand p{font-size:12px;letter-spacing:.15em;text-transform:uppercase;color:var(--txt-dim);margin:5px 0 0;font-family:var(--mono);}
+  .trust-row{display:flex;align-items:center;justify-content:flex-end;gap:8px;flex-wrap:wrap;}
+  .trust-chip{display:inline-flex;align-items:center;gap:7px;min-height:32px;padding:6px 10px;border:1px solid rgba(255,255,255,.10);background:rgba(9,15,30,.68);color:#bdd0dd;font-size:12px;}
+  .trust-chip i{width:7px;height:7px;border-radius:50%;background:#45f2a4;box-shadow:0 0 10px rgba(69,242,164,.7);}
+  .windows-row{display:grid;grid-template-columns:minmax(0,1.65fr) minmax(310px,.8fr);gap:16px;align-items:stretch;}
+  .windows-row > .window,.windows-row > .window.side{min-width:0;}
+  .window{background:linear-gradient(155deg,rgba(12,20,38,.94),rgba(6,11,23,.88));box-shadow:0 20px 70px rgba(0,0,0,.45),inset 0 0 48px rgba(54,228,255,.025);}
+  .title-bar{min-height:42px;padding:10px 15px;}
+  .title-bar-text{font-size:12px;color:#d6f6ff;}
+  .window-body{padding:15px;}
+  button{min-height:38px;border-color:rgba(54,228,255,.28);font-weight:600;}
+  button:focus-visible,input:focus-visible,summary:focus-visible{outline:2px solid #fff;outline-offset:3px;}
+  button.primary{background:linear-gradient(135deg,#36e4ff,#48b9ff);border-color:#72efff;color:#031019;box-shadow:0 8px 22px rgba(54,228,255,.18);}
+  button.primary:hover:not(:disabled){background:linear-gradient(135deg,#75efff,#6fc9ff);color:#031019;}
+  .toolbar{display:flex;justify-content:space-between;gap:10px;margin-bottom:10px;}
+  .camera-actions,.mode-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
+  .mode-actions{justify-content:flex-end;margin-left:auto;}
+  .mode-switch{margin-left:0;}
+  .status{display:inline-flex;align-items:center;min-height:30px;padding:4px 9px;border:1px solid rgba(255,255,255,.08);background:rgba(0,0,0,.18);border-radius:99px;}
+  .quick-steps{list-style:none;margin:0 0 12px;padding:0;display:grid;grid-template-columns:repeat(3,1fr);gap:7px;counter-reset:step;}
+  .quick-steps li{counter-increment:step;display:flex;align-items:center;gap:8px;min-height:34px;padding:7px 9px;background:rgba(54,228,255,.045);border:1px solid rgba(54,228,255,.10);color:#a9c0d0;font-size:12px;}
+  .quick-steps li::before{content:counter(step);display:grid;place-items:center;width:20px;height:20px;flex:0 0 20px;border:1px solid var(--cyan-dim);color:var(--cyan);font-family:var(--mono);font-size:11px;}
+  .cam-stage{border-color:rgba(54,228,255,.34);box-shadow:inset 0 0 70px rgba(54,228,255,.035);}
+  .cam-hint strong{display:block;margin-bottom:5px;color:#f5fbff;font-size:18px;}
+  .loading-bar{height:3px;width:min(240px,72vw);margin:15px auto 0;overflow:hidden;background:rgba(54,228,255,.12);}
+  .loading-bar::after{content:'';display:block;width:42%;height:100%;background:var(--cyan);box-shadow:0 0 12px var(--cyan);animation:loading 1.2s ease-in-out infinite alternate;}
+  @keyframes loading{from{transform:translateX(-100%)}to{transform:translateX(240%)}}
+  .privacy-note{display:flex;align-items:flex-start;gap:9px;margin-top:11px;padding:10px 12px;border:1px solid rgba(69,242,164,.16);background:rgba(69,242,164,.045);color:#a8c5b8;font-size:12px;line-height:1.55;}
+  .privacy-note b{color:#71efb1;white-space:nowrap;}
+  .play-panel{gap:13px;}
+  .note-big{font-size:clamp(44px,5vw,68px);border-color:rgba(54,228,255,.25);background:radial-gradient(circle at 50% 25%,rgba(54,228,255,.14),rgba(2,8,16,.86));}
+  .pick-label{font-size:12px;line-height:1.5;color:#9bb2c4;}
+  button.pick{min-height:34px;}
+  .advanced-window{display:block;}
+  .advanced-window > summary{list-style:none;cursor:pointer;user-select:none;}
+  .advanced-window > summary::-webkit-details-marker{display:none;}
+  .advanced-window > summary::after{content:'展开';margin-left:auto;font-size:12px;color:var(--cyan);font-family:var(--mono);}
+  .advanced-window[open] > summary::after{content:'收起';}
+  .summary-note{margin-left:10px;color:var(--txt-dim);font-size:12px;font-weight:400;letter-spacing:0;}
+  .taskbar{border-color:rgba(54,228,255,.18);background:rgba(5,10,21,.82);}
+  .taskbar .footer-privacy{color:#7adfb3;}
+  .toast{position:fixed;right:22px;bottom:22px;z-index:10020;max-width:min(360px,calc(100vw - 28px));padding:12px 15px;border:1px solid var(--cyan-dim);background:rgba(5,12,25,.96);box-shadow:0 14px 44px rgba(0,0,0,.5),0 0 24px rgba(54,228,255,.1);color:#e8f7ff;font-size:13px;line-height:1.5;transform:translateY(18px);opacity:0;pointer-events:none;transition:.2s ease;}
+  .toast.show{transform:translateY(0);opacity:1;}
+  @media (max-width:1040px){
+    .windows-row{grid-template-columns:1fr;}
+    .window.side .play-panel{max-width:none;}
+  }
+  @media (max-width:720px){
+    body{padding:12px;}
+    .site-header{align-items:flex-start;flex-direction:column;}
+    .trust-row{justify-content:flex-start;}
+    .brand-mark{width:42px;height:42px;flex-basis:42px;}
+    .toolbar,.camera-actions,.mode-actions{width:100%;}
+    .toolbar{align-items:stretch;flex-direction:column;}
+    .mode-actions{justify-content:flex-start;}
+    .mode-switch{display:grid;grid-template-columns:1fr 1fr;flex:1;}
+    .mode-switch button{width:100%;padding-inline:8px;}
+    .quick-steps{grid-template-columns:1fr;}
+    .quick-steps li{min-height:31px;}
+    .stage-tip{max-width:calc(100% - 20px);font-size:12px;}
+    .hud.right{display:none;}
+    .window-body{padding:12px;}
+    .debug-grid{grid-template-columns:1fr;}
+    .summary-note{display:none;}
+    .taskbar{gap:8px;}
+    .taskbar button{display:none;}
+  }
+  @media (prefers-reduced-motion:reduce){*,*::before,*::after{scroll-behavior:auto!important;animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important;}}
+</style>
+</head>
+<body>
+<div class="desktop">
+
+  <header class="site-header">
+    <div class="brand">
+      <div class="brand-mark" aria-hidden="true">
+        <svg viewBox="0 0 64 64"><path d="M11 40c8-22 18-22 27 0s13 17 16 4" fill="none" stroke="#36e4ff" stroke-width="6" stroke-linecap="round"/><circle cx="24" cy="22" r="6" fill="#ff5aa7"/></svg>
+      </div>
+      <div><h1>空气交互舱</h1><p>Air Interaction Pod · Spatial Play Lab</p></div>
+    </div>
+    <div class="trust-row" aria-label="隐私与运行方式">
+      <span class="trust-chip"><i></i>设备端手势识别</span>
+      <span class="trust-chip">摄像头画面不上传</span>
+      <span class="trust-chip">推荐桌面 Chrome / Edge</span>
+    </div>
+  </header>
+
+  <div class="windows-row">
+    <!-- ============ 摄像头 / 舞台 ============ -->
+    <div class="window">
+      <div class="title-bar">
+        <div class="title-bar-text">AirPod · 体感舞台</div>
+        <div class="title-bar-controls">
+          <button aria-label="Minimize"></button>
+          <button aria-label="Maximize"></button>
+          <button aria-label="Close"></button>
+        </div>
+      </div>
+      <div class="window-body">
+        <div class="toolbar">
+          <div class="camera-actions">
+            <button id="startBtn" class="primary">▶ 开启摄像头</button>
+            <button id="stopBtn" disabled>■ 停止</button>
+            <span class="status" id="status" role="status" aria-live="polite">尚未启动</span>
+          </div>
+          <div class="mode-actions">
+            <span class="mode-switch" aria-label="选择应用">
+              <button id="modeInst" class="mode-btn active" aria-pressed="true">🎹 空气乐器 <kbd>1</kbd></button>
+              <button id="modePaint" class="mode-btn" aria-pressed="false">✨ 粒子绘画 <kbd>2</kbd></button>
+            </span>
+            <span class="mode-switch" title="快捷键 H：分工=副手切功能；独立=双手同时创作" aria-label="选择双手模式">
+              <button id="dualSplit" class="mode-btn active" aria-pressed="true">双手·分工</button>
+              <button id="dualDual" class="mode-btn" aria-pressed="false">双手·独立</button>
+            </span>
+          </div>
+        </div>
+        <ol class="quick-steps" aria-label="快速开始">
+          <li>允许摄像头权限</li><li>手距镜头约 40–70 cm</li><li>移动食指，捏合拇食指开始</li>
+        </ol>
+        <div class="cam-stage">
+          <video id="video" class="mirror" playsinline muted autoplay></video>
+          <canvas id="skelCanvas" class="mirror"></canvas>
+          <canvas id="paintCanvas" hidden></canvas>
+          <canvas id="overlayCanvas"></canvas>
+          <div class="hud left" id="stateBadge">未启动</div>
+          <div class="hud right" id="coordBadge">x:- y:-</div>
+          <div class="stage-tip" id="stageTip">食指移动控制光标 · 上下位置=音高 · 拇食指捏合=弹一个音</div>
+          <div class="cam-hint" id="camHint"><div><strong>让双手成为控制器</strong>正在检测运行环境…</div></div>
+        </div>
+        <div class="privacy-note"><b>隐私说明</b><span>识别在浏览器内完成，视频帧不会上传或保存；联网仅用于首次加载手势模型和音频库。</span></div>
+      </div>
+    </div>
+
+    <!-- ============ 应用面板（乐器 / 绘画 切换） ============ -->
+    <div class="window side">
+      <div class="title-bar">
+        <div class="title-bar-text">App · 应用面板</div>
+        <div class="title-bar-controls"><button aria-label="Help"></button></div>
+      </div>
+      <div class="window-body">
+
+        <!-- 乐器面板 -->
+        <div class="play-panel" id="panelInst">
+          <div class="note-big" id="noteBig">--</div>
+          <div>
+            <div class="pick-label">音色库（快捷键 3~9、0、-、=、Q W E R，点音色名自动试听，A 键再听）</div>
+            <div class="pick-grid" id="instPick"></div>
+            <div style="margin:6px 0 2px;"><button id="btnAudition">▶ 试听当前音色片段</button></div>
+          </div>
+          <div>
+            <div class="pick-label">演奏法（M 切换）</div>
+            <div class="pick-grid" id="modePick">
+              <button data-mode="hit" class="pick active">▤ 离散击打</button>
+              <button data-mode="glide" class="pick">∿ 连续滑音</button>
+            </div>
+          </div>
+          <div id="scaleBox">
+            <div class="pick-label">音阶（N 切换，鼓组时自动隐藏）</div>
+            <div class="pick-grid" id="scalePick"></div>
+          </div>
+          <div>
+            <div class="pick-label">最近弹奏（最多 14 个）</div>
+            <div class="seq" id="seq"></div>
+          </div>
+          <div class="kv" id="instInfo"></div>
+          <div class="kv">
+            音频引擎：<span id="audioState" class="warn">Tone.js 未加载</span><br>
+            触发计数：按下 <b id="pressCount">0</b> · 松开 <b id="releaseCount">0</b>
+          </div>
+          <div style="font-size:12px;color:#7f97b0;line-height:1.7;" id="instTip"></div>
+          <div style="font-size:12px;color:#7f97b0;line-height:1.7;margin-top:6px;">
+            双手（H 切换）：<b>分工</b>＝主手（青环）弹奏不停，<b style="color:#ff9ec4">副手（品红虚环）</b>捏一下换音色、握拳 0.6 秒换音阶；
+            <b>独立</b>＝两只手各弹各的音，可同时按出双音/和弦（条带副手位置品红高亮）。
+          </div>
+        </div>
+
+        <!-- 绘画面板 -->
+        <div class="play-panel" id="panelPaint" hidden>
+          <div class="color-row">
+            <span class="swatch" id="swatch"></span>
+            <div class="kv">当前颜色：<b id="colorName"></b><br>光谱点拖自选 · 快捷色用捏合 / C 循环</div>
+          </div>
+          <div class="picker-box">
+            <canvas id="specCanvas" class="spec-canvas"></canvas>
+            <div class="sat-row">
+              <span>饱和度</span>
+              <input type="range" id="satRange" min="0" max="100" value="100">
+              <span id="satVal">100%</span>
+            </div>
+          </div>
+          <div class="pick-label" style="margin-top:8px;">快捷霓虹色（捏合换色在这 8 色间循环）</div>
+          <div class="palette-row" id="paletteRow"></div>
+          <div class="pick-label" style="margin-top:9px;">画笔（快捷键 B 循环）</div>
+          <div class="pick-row" id="brushRow"></div>
+          <div class="btn-row" style="margin-top:9px;">
+            <button id="btnColor">换色 (C)</button>
+            <button id="btnUndo">撤销一笔 (Z)</button>
+            <button id="btnClear">清屏 (X)</button>
+            <button id="btnSave">保存PNG (S)</button>
+            <button id="btnReplay">轨迹回放 (R)</button>
+          </div>
+          <div class="kv" id="paintStats">笔画 0 · 采样点 0</div>
+          <div style="font-size:12px;color:#7f97b0;line-height:1.7;">
+            只伸<b style="color:#c9dcec;">食指</b>（其他手指弯曲）= 落笔，松开其余手指自然抬笔；<br>
+            捏合/C=换色，<b>B</b>=循环画笔，<b>Z</b>=撤销一笔；<b>握拳保持 0.6 秒</b>=清屏；<b>张掌保持 0.5 秒</b>=保存 PNG（保持手势期间有进度环，防误触）。<br>
+            双手（H 切换）：<b>分工</b>＝主手作画不停，<b style="color:#ff9ec4">副手</b>捏一下换色、握拳 0.6 秒换画笔；<b>独立</b>＝两只手各画一笔，可双手同时作画。
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ 调试 / 标定窗口 ============ -->
+  <details class="window advanced-window">
+    <summary class="title-bar">
+      <div class="title-bar-text">高级校准与识别诊断</div>
+      <span class="summary-note">识别不稳时再打开</span>
+    </summary>
+    <div class="window-body">
+      <div class="debug-grid">
+        <div class="ctl">
+          <label>位置平滑系数 α（小=稳但滞后，大=跟手但抖）<span class="v" id="vAlpha"></span></label>
+          <input type="range" id="sAlpha" min="0.05" max="1" step="0.05">
+        </div>
+        <div class="ctl">
+          <label>捏合进入阈值 r_in（小于它=按下）<span class="v" id="vEnter"></span></label>
+          <input type="range" id="sEnter" min="0.1" max="0.8" step="0.01">
+        </div>
+        <div class="ctl">
+          <label>捏合离开阈值 r_out（大于它=松开，须 &gt; r_in）<span class="v" id="vExit"></span></label>
+          <input type="range" id="sExit" min="0.2" max="0.9" step="0.01">
+        </div>
+        <div class="ctl">
+          <label>两次按下最小间隔 ms（防连发）<span class="v" id="vInterval"></span></label>
+          <input type="range" id="sInterval" min="0" max="500" step="10">
+        </div>
+      </div>
+
+      <div style="margin-top:12px;">
+        <div style="font-size:12.5px;margin-bottom:4px;">
+          捏合比值 r 实时标定条（左小右大；两条竖线分别是 r_in / r_out，缓慢捏合观察自己的 r 落在哪）
+        </div>
+        <canvas id="calibCanvas" width="1120" height="42"></canvas>
+      </div>
+
+      <div class="readout" style="margin-top:10px;" id="readout">等待数据…</div>
+
+      <div class="checks" style="margin-top:10px;">
+        <label><input type="checkbox" id="cSkel" checked> 显示手部骨架</label>
+        <label><input type="checkbox" id="cBands" checked> 显示音高条带</label>
+        <label><input type="checkbox" id="cLink" checked> 显示拇食指捏合连线</label>
+      </div>
+
+      <div style="margin-top:12px;border-top:1px dashed rgba(34,230,255,.25);padding-top:10px;">
+        <div style="font-size:12.5px;margin-bottom:6px;font-weight:bold;">弱场景识别增强（肤色不是关键，光照/对比/入镜姿势才是）</div>
+        <div class="debug-grid">
+          <div class="ctl">
+            <label>手掌检测置信度（重建生效，越低越容易找到手）<span class="v" id="vDetect"></span></label>
+            <input type="range" id="sDetect" min="0.1" max="0.9" step="0.05">
+          </div>
+          <div class="ctl">
+            <label>跟踪置信度（重建生效，越低越不容易丢）<span class="v" id="vTrack"></span></label>
+            <input type="range" id="sTrack" min="0.1" max="0.9" step="0.05">
+          </div>
+          <div class="ctl">
+            <label>画面对比度增强（实时生效）<span class="v" id="vContrast"></span></label>
+            <input type="range" id="sContrast" min="1" max="1.7" step="0.02">
+          </div>
+          <div class="ctl">
+            <label>画面亮度（实时生效）<span class="v" id="vBright"></span></label>
+            <input type="range" id="sBright" min="0.85" max="1.25" step="0.01">
+          </div>
+        </div>
+        <div class="checks" style="margin-top:8px;">
+          <label><input type="checkbox" id="cOneHand"> 单手模式（更快更稳；取消=双手，主手青环可操作、副手品红虚环）</label>
+          <label><input type="checkbox" id="cEnhance" checked> 启用画面增强</label>
+          <button id="btnApplyModel">应用检测参数（重建模型，约1秒）</button>
+          <span style="font-size:12px;color:#7f97b0;">排查顺序：开灯补光 → 整只手入镜留边距 → 手与衣袖/背景拉开颜色 → 手别贴边/别太近</span>
+        </div>
+      </div>
+      <p style="font-size:12px;color:#7f97b0;margin:10px 2px 2px;line-height:1.7;">
+        验收方法：① 手完全不动时，readout 平滑坐标波动 ≤2~3px（内部 640×480 口径）；
+        ② 张开手快速挥动不应增加“按下”计数；③ r 停在两条竖线之间时状态不得来回跳；
+        ④ 每次按下/松开必须成对。绘画模式：只伸食指才出笔画，握拳/张掌保持到进度环走满才触发。
+      </p>
+    </div>
+  </details>
+
+  <!-- 任务栏 -->
+  <div class="taskbar">
+    <span>⟊ AirPod</span>
+    <span>📷 体感舞台</span><span>🎹 空气乐器</span><span>✨ 粒子绘画</span><span class="footer-privacy">● 本地处理</span>
+    <span class="clock" id="clock">--:--</span>
+  </div>
+</div>
+<div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+<script type="module">
+/* =====================================================================
+ * 空气交互舱 · 阶段1~3
+ *   阶段1：指尖光标（EMA）+ 捏合点击（双阈值迟滞）
+ *   阶段2：空气乐器（Tone.js 五声音阶，捏合触发）
+ *   阶段3：指尖粒子绘画（单伸食指落笔/捏合换色/握拳保持清屏/张掌保持保存/轨迹回放）
+ * 纯前端 / 浏览器本地推理 / 摄像头数据不出本机
+ *
+ * 解耦架构：检测相位（仅新视频帧）只写共享 hand；渲染相位（每 rAF）只读 hand。
+ * ===================================================================== */
+
+/* ---------- 0. DOM ---------- */
+const $ = id => document.getElementById(id);
+const video=$('video'), skelCanvas=$('skelCanvas'), paintCanvas=$('paintCanvas'), overlay=$('overlayCanvas');
+const sctx=skelCanvas.getContext('2d'), pctx=paintCanvas.getContext('2d'), octx=overlay.getContext('2d');
+const calibCanvas=$('calibCanvas'), cctx=calibCanvas.getContext('2d');
+// 离屏预处理画布：低对比场景先增强再送模型（不影响显示）；尺寸在 start() 里随舞台一起设置
+const procCanvas=document.createElement('canvas');
+const proc2d=procCanvas.getContext('2d');
+// 识别质量统计（滚动 1s 窗口）
+const qStat={frames:0,lost:0,start:0,pct:0};
+const statusEl=$('status'), stateBadge=$('stateBadge'), coordBadge=$('coordBadge'), camHint=$('camHint');
+const startBtn=$('startBtn'), stopBtn=$('stopBtn'), stageTip=$('stageTip');
+const noteBig=$('noteBig'), seqEl=$('seq'), audioState=$('audioState');
+const pressCountEl=$('pressCount'), releaseCountEl=$('releaseCount'), readout=$('readout');
+const panelInst=$('panelInst'), panelPaint=$('panelPaint');
+const modeInstBtn=$('modeInst'), modePaintBtn=$('modePaint');
+const dualSplitBtn=$('dualSplit'), dualDualBtn=$('dualDual');
+const toastEl=$('toast');
+let toastTimer=null;
+function showToast(message){
+  toastEl.textContent=message; toastEl.classList.add('show');
+  clearTimeout(toastTimer); toastTimer=setTimeout(()=>toastEl.classList.remove('show'),2200);
+}
+
+/* ---------- 1. CFG：手感参数集中，滑块实时改，标定满意后回填默认 ---------- */
+const CFG = {
+  anchorIdx:8,
+  alpha:0.40, ratioAlpha:0.6,
+  pinchEnter:0.35, pinchExit:0.55, confirmFrames:2, minClickMs:180,
+  freezeMs:200,
+  fistHoldMs:600,     // 握拳保持多久清屏（防误删）
+  palmHoldMs:500,     // 张掌保持多久保存（防误下载）
+  // 弱场景鲁棒性参数
+  numHands:2,         // 双手识别（主手交互+副手显示/后续功能）；勾选「单手模式」回退为 1
+  minDetect:0.5,      // 手掌检测置信度（重建模型生效）
+  minTrack:0.5,       // 关键点跟踪置信度（重建模型生效）
+  enhance:true,       // 送模型前做亮度/对比度增强，改善低对比/昏暗场景
+  contrast:1.20, brightness:1.06,
+  stageW:640, stageH:480
+};
+function bindSlider(sliderId,valId,key,fmt=v=>v){
+  const s=$(sliderId),v=$(valId);
+  s.value=CFG[key]; v.textContent=fmt(CFG[key]);
+  s.addEventListener('input',()=>{
+    CFG[key]=parseFloat(s.value); v.textContent=fmt(CFG[key]);
+    if(key==='pinchEnter'&&CFG.pinchEnter>=CFG.pinchExit){ CFG.pinchExit=CFG.pinchEnter+0.08; $('sExit').value=CFG.pinchExit; $('vExit').textContent=CFG.pinchExit.toFixed(2); }
+    if(key==='pinchExit'&&CFG.pinchExit<=CFG.pinchEnter){ CFG.pinchEnter=CFG.pinchExit-0.08; $('sEnter').value=CFG.pinchEnter; $('vEnter').textContent=CFG.pinchEnter.toFixed(2); }
+  });
+}
+bindSlider('sAlpha','vAlpha','alpha',v=>v.toFixed(2));
+bindSlider('sEnter','vEnter','pinchEnter',v=>v.toFixed(2));
+bindSlider('sExit','vExit','pinchExit',v=>v.toFixed(2));
+bindSlider('sInterval','vInterval','minClickMs',v=>v.toFixed(0));
+const showSkel=$('cSkel'), showBands=$('cBands'), showLink=$('cLink');
+
+/* ---------- 2. 工具 ---------- */
+const clamp=(v,lo,hi)=>Math.min(hi,Math.max(lo,v));
+function loadScript(src){
+  return new Promise((resolve,reject)=>{
+    const t=document.createElement('script');
+    t.src=src; t.onload=resolve; t.onerror=()=>reject(new Error('script load fail: '+src));
+    document.head.appendChild(t);
+  });
+}
+
+/* ---------- 3. 模型加载（双 CDN + 双模型地址 + GPU/CPU 回退） ---------- */
+let recognizer=null;
+const MODEL_URLS=[
+  'https://storage.googleapis.com/mediapipe-tasks/gesture_recognizer/gesture_recognizer.task',
+  'https://storage.googleapis.com/mediapipe-models/gesture_recognizer/gesture_recognizer/float16/1/gesture_recognizer.task'
+];
+async function loadModel(){
+  const opts=()=>({
+    runningMode:'VIDEO', numHands:CFG.numHands,
+    minHandDetectionConfidence:CFG.minDetect, minHandPresenceConfidence:CFG.minDetect,
+    minTrackingConfidence:CFG.minTrack
+  });
+  const CDNS=[
+    'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/vision_bundle.mjs',
+    'https://unpkg.com/@mediapipe/tasks-vision@latest/vision_bundle.mjs'
+  ];
+  let mod=null,wasm='';
+  for(const url of CDNS){ try{ mod=await import(url); wasm=url.replace('vision_bundle.mjs','wasm'); break; }catch(e){ console.warn('CDN 失败，尝试备用：',url,e); } }
+  if(!mod) throw new Error('模型库加载失败：无法访问 CDN，请检查网络');
+  const fileset=await mod.FilesetResolver.forVisionTasks(wasm);
+  let lastErr=null;
+  for(const modelAssetPath of MODEL_URLS){
+    try{
+      try{
+        return await mod.GestureRecognizer.createFromOptions(fileset,{baseOptions:{modelAssetPath,delegate:'GPU'},...opts()});
+      }catch(eGpu){
+        console.warn('GPU 不可用，回退 CPU：',eGpu);
+        return await mod.GestureRecognizer.createFromOptions(fileset,{baseOptions:{modelAssetPath},...opts()});
+      }
+    }catch(e){ lastErr=e; console.warn('模型源失败，尝试下一个：',modelAssetPath,e); }
+  }
+  throw new Error('手势模型下载失败（需能访问 googleapis）'+(lastErr?'：'+lastErr.message:''));
+}
+// 按当前 CFG 构建（或重建）识别器；运行中重建不影响主循环（每帧现取全局 recognizer）
+let building=false;
+async function buildRecognizer(){
+  if(building) return;
+  building=true;
+  try{
+    const next=await loadModel();
+    const old=recognizer; recognizer=next;
+    if(old){ try{old.close();}catch(e){console.warn('旧模型释放失败：',e);} }
+  }finally{ building=false; }
+}
+
+/* ---------- 3.5 Tone.js（UMD 双源） ---------- */
+async function loadTone(){
+  if(window.Tone) return;
+  for(const u of ['https://cdn.jsdelivr.net/npm/tone@15.1.22/build/Tone.js','https://unpkg.com/tone@15.1.22/build/Tone.js']){
+    try{ await loadScript(u); if(window.Tone) return; }catch(e){ console.warn('Tone CDN 失败：',u,e); }
+  }
+  throw new Error('Tone.js 加载失败（检查网络）');
+}
+
+/* ---------- 4. 骨架连接 ---------- */
+const HAND_CONNECTIONS=[
+  [0,1],[1,2],[2,3],[3,4],[0,5],[5,6],[6,7],[7,8],
+  [5,9],[9,10],[10,11],[11,12],[9,13],[13,14],[14,15],[15,16],
+  [13,17],[17,18],[18,19],[19,20],[0,17]
+];
+
+/* ---------- 5. Geo：手指几何（指尖比近端关节离手腕更远=伸直） ---------- */
+const Geo={
+  dist:(a,b)=>Math.hypot(a.x-b.x,a.y-b.y),
+  ext(lm,tip,pip){ return Geo.dist(lm[tip],lm[0]) > Geo.dist(lm[pip],lm[0]); },
+  // “只伸食指”的指向姿势：食指伸直，中/无名/小指弯曲（绘画落笔姿态）
+  isPointing(lm){ return Geo.ext(lm,8,6) && !Geo.ext(lm,12,10) && !Geo.ext(lm,16,14) && !Geo.ext(lm,20,18); }
+};
+
+/* ---------- 6. HandTracker：主手锁定 + 尺度归一化 + 坐标镜像 ---------- */
+const Tracker={
+  lastWrist:null, lastWrist2:null,
+  _nearest(last,list){ // list:[{lm,i}]；返回距上一帧手腕最近者下标，无历史返回 null
+    if(!last) return null;
+    let bi=-1,bd=Infinity;
+    list.forEach(o=>{ const d=Geo.dist(o.lm[0],last); if(d<bd){bd=d;bi=o.i;} });
+    return bi;
+  },
+  _largest(lms){ // 兜底：手掌尺度最大者
+    let bi=0,bd=-1;
+    lms.forEach((lm,i)=>{ const d=Geo.dist(lm[0],lm[9]); if(d>bd){bd=d;bi=i;} });
+    return bi;
+  },
+  /** 双手选择：主手沿用原锁定规则，副手取剩下那只并各自做最近邻匹配，减少交叉时编号跳变 */
+  pickTwo(res){
+    const lms=res.landmarks;
+    if(lms.length===1) return {main:{lm:lms[0],idx:0}, other:null};
+    const all=lms.map((lm,i)=>({lm,i}));
+    let mi=this._nearest(this.lastWrist,all);
+    if(mi===null) mi=this._largest(lms);
+    const rest=all.filter(o=>o.i!==mi);
+    let oi=this._nearest(this.lastWrist2,rest);
+    if(oi===null) oi=rest[0].i;
+    return {main:{lm:lms[mi],idx:mi}, other:{lm:lms[oi],idx:oi}};
+  },
+  /** 返回主手及其在结果数组中的下标（用于对齐内置手势类别） */
+  pick(res){ return this.pickTwo(res).main; },
+  measure(lm){
+    const handScale=Geo.dist(lm[0],lm[9]);
+    const a=lm[CFG.anchorIdx], t4=lm[4], t8=lm[8];
+    const rawRatio=Geo.dist(t4,t8)/(handScale||1e-6);
+    return {
+      rawX:clamp(1-a.x,0,1), rawY:clamp(a.y,0,1),
+      p4:{x:1-t4.x,y:t4.y}, p8:{x:1-t8.x,y:t8.y},
+      rawRatio, pointing:Geo.isPointing(lm)
+    };
+  },
+  reset(){ this.lastWrist=null; this.lastWrist2=null; }
+};
+
+/* ---------- 7. EMA 平滑（预留 One Euro 升级位） ---------- */
+class EMA{
+  constructor(alpha){ this.alpha=alpha; this.x=null; this.y=null; }
+  reset(){ this.x=null; this.y=null; }
+  push(x,y){
+    if(this.x===null){ this.x=x; this.y=y; }
+    else{ const a=this.alpha; this.x+=a*(x-this.x); this.y+=a*(y-this.y); }
+    return {x:this.x,y:this.y};
+  }
+}
+const posSmoother=new EMA(CFG.alpha);
+let ratioSmoothed=null;
+const posSmoother2=new EMA(CFG.alpha);   // 副手独立平滑
+let ratioSmoothed2=null;
+
+/* ---------- 8. PinchFSM：迟滞 + 确认帧 + 最小间隔，输出一次性边沿 ---------- */
+const PinchFSM={
+  state:'open', belowCount:0, lastPressTs:-Infinity,
+  reset(){ this.state='open'; this.belowCount=0; this.lastPressTs=-Infinity; },
+  update(ratio,now){
+    let edge=null;
+    if(this.state==='open'){
+      if(ratio<CFG.pinchEnter){
+        this.belowCount++;
+        if(this.belowCount>=CFG.confirmFrames && now-this.lastPressTs>=CFG.minClickMs){
+          this.state='pinched'; this.lastPressTs=now; edge='press';
+        }
+      }else this.belowCount=0;
+    }else if(ratio>CFG.pinchExit){ this.state='open'; edge='release'; }
+    return {edge};
+  }
+};
+const PinchFSM2=Object.create(PinchFSM);  // 副手独立捏合状态机（C 阶段仅显示，B 阶段承接功能手势）
+PinchFSM2.state='open'; PinchFSM2.belowCount=0; PinchFSM2.lastPressTs=-Infinity;
+
+/* ---------- 9. 共享 handState ---------- */
+const hand={
+  present:false, lostAt:0,
+  rawX:.5, rawY:.5, x:.5, y:.5,
+  ratio:1, p4:null, p8:null,
+  pinch:'open', gesture:'None', pointing:false,
+  pressEdge:false, releaseEdge:false,
+  detectFps:0,
+  score:null, bw:0, bh:0, mnx:0, mny:0, mxx:1, mxy:1, lossPct:0
+};
+// 第二只手（副手）：主手精细操作，副手只发离散功能指令
+const hand2={
+  present:false, x:.5, y:.5, ratio:1, pinch:'open', gesture:'None', pointing:false, pressEdge:false, releaseEdge:false
+};
+function resetHand2(){
+  hand2.present=false; hand2.pinch='open'; hand2.gesture='None'; hand2.pressEdge=hand2.releaseEdge=false;
+  posSmoother2.reset(); ratioSmoothed2=null; PinchFSM2.reset();
+}
+
+/* ---------- 10. 应用状态机：instrument / paint ---------- */
+let app='instrument';
+const TIP={
+  instrument:'空气乐器：食指上下=音高（上高下低），拇食指捏合=弹一个音',
+  paint:'粒子绘画：只伸食指=落笔，捏合=换色，握拳保持=清屏，张掌保持=保存'
+};
+function setApp(next){
+  app=next;
+  panelInst.hidden = next!=='instrument';
+  panelPaint.hidden = next!=='paint';
+  paintCanvas.hidden = next!=='paint';
+  modeInstBtn.classList.toggle('active',next==='instrument');
+  modePaintBtn.classList.toggle('active',next==='paint');
+  modeInstBtn.setAttribute('aria-pressed',String(next==='instrument'));
+  modePaintBtn.setAttribute('aria-pressed',String(next==='paint'));
+  if(next==='instrument') Instrument.syncUI(); else stageTip.textContent=TIP.paint;
+  if(next!=='instrument') Instrument.glideEnd();
+  Paint.endStroke(); Paint.stopReplay();
+}
+modeInstBtn.addEventListener('click',()=>setApp('instrument'));
+modePaintBtn.addEventListener('click',()=>setApp('paint'));
+
+/* ---------- 11. Instrument 乐器库：6 音色 × 2 演奏法 × 3 音阶（多模态） ---------- */
+// 音名工具：MIDI 号 → 科学音名（60 = C4）
+const NOTE_NAMES=['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
+function midiToName(m){ return NOTE_NAMES[((m%12)+12)%12]+(Math.floor(m/12)-1); }
+function buildScale(rootMidi,semis,count=10){
+  const out=[];
+  for(let oct=0;out.length<count;oct++) for(const s of semis){ out.push(midiToName(rootMidi+oct*12+s)); if(out.length>=count) break; }
+  return out;
+}
+const SCALES={
+  pentMaj:{n:'大调五声',s:[0,2,4,7,9]},
+  pentMin:{n:'小调五声',s:[0,3,5,7,10]},
+  major:{n:'自然大调',s:[0,2,4,5,7,9,11]}
+};
+// 音色元数据（顺序对应快捷键 INST_KEYS）
+const INST_META=[
+  {id:'crystal', n:'卡林巴琴',tip:'三角波软槌+回声，像拇指琴，短而清透，适合分解旋律'},
+  {id:'pluck',   n:'拨弦',    tip:'拨弦物理建模(Karplus-Strong)，古筝/吉他拨弦，原声感最强'},
+  {id:'bell',    n:'钟琴',    tip:'非谐泛音+2.4 秒长尾混响，空灵钟声，适合单音点缀'},
+  {id:'musicbox',n:'八音盒',  tip:'高泛音短衰减+机械拨片声，极小极脆的音乐盒颗粒'},
+  {id:'pad',     n:'氛围铺底',tip:'0.45 秒慢起音柔和膨胀，长音氛围铺陈，与弹拨类反差最大'},
+  {id:'strings', n:'弦乐群',  tip:'低通柔化锯齿+5Hz 揉弦+合唱，连绵弓弦感，滑音像在拉弦'},
+  {id:'bass',    n:'低频贝斯',tip:'三角波圆润低八度，干声无混响，负责低音线条'},
+  {id:'chip',    n:'芯片方波',tip:'8-bit 复古游戏机方波，故意保留的电子味，干脆有棱角'},
+  {id:'organ',   n:'拉杆风琴',tip:'三层正弦加法合成+轻颤音，按住不断，圣咏式持续音'},
+  {id:'metal',   n:'金属锣钵',tip:'MetalSynth 非谐金属泛音，偏干短余韵，铜锣/钢片敲击'},
+  {id:'lead',    n:'失真主音',tip:'锯齿经失真器，故意保留的电子/摇滚主音，滑音 solo 穿透'},
+  {id:'flute',   n:'竹笛吹管',tip:'三角波带通共振+气息噪声+揉音，近原声吹管，悠扬旋律'},
+  {id:'epiano',  n:'Rhodes电钢',tip:'1:1 暖 FM+相位轻染，电钢琴温暖琴槌感，适合分解和弦'},
+  {id:'drums',   n:'空气鼓组',tip:'纵向 5 区=开镲/闭镲/军鼓/通鼓/底鼓，捏合即打，纯节奏'}
+];
+const INST_KEYS='34567890-=qwer'; // 音色快捷键（与 INST_META 顺序对应）
+const DRUM_BANDS=['底鼓','通鼓','军鼓','闭镲','开镲']; // 按 bandAt 索引：从下到上（屏幕最上=开镲，最下=底鼓）
+const ROOT_MIDI=60; // C4 起
+const Instrument={
+  instId:'crystal', mode:'hit', scaleId:'pentMaj',
+  notes:buildScale(ROOT_MIDI,SCALES.pentMaj.s,10),
+  seq:[], ctrl:null, ctrl2:null, bus:null,
+  // 滑音状态按手分离（main 主手 / sec 副手），glideOn/glideNote 镜像 main，保持旧接口
+  gl:{main:{on:false,note:null},sec:{on:false,note:null}},
+  get glideOn(){return this.gl.main.on;}, get glideNote(){return this.gl.main.note;},
+  _syncUI:null,
+  /* 音频总线：各音色 → 共享混响/限幅器 → 输出 */
+  async unlock(){
+    await loadTone();
+    const T=window.Tone; if(!T) return;
+    await T.start();
+    if(!this.bus){
+      this.bus={ master:new T.Limiter(-3), verb:new T.Reverb({decay:2.6,wet:0.22}) };
+      this.bus.verb.connect(this.bus.master); this.bus.master.connect(T.getDestination());
+    }
+    await this.ensureVoice();
+    if(T.context.state!=='running') await T.start();
+    audioState.textContent='Tone.js '+T.version+' 已就绪'; audioState.className='ok';
+  },
+  isDrums(){ return this.instId==='drums'; },
+  bands(){ return this.isDrums()?DRUM_BANDS:this.notes; },
+  bandAt(ny){ const b=this.bands(); const idx=clamp(b.length-1-Math.floor(ny*b.length),0,b.length-1); return {idx,label:b[idx],note:b[idx]}; },
+  /* 构建/释放具体音色，切换时释放旧节点防泄漏 */
+  async ensureVoice(){
+    const T=window.Tone; if(!T||!this.bus) return;
+    if(this.ctrl&&this.ctrl.id===this.instId&&this.ctrl2&&this.ctrl2.id===this.instId) return;
+    this.disposeVoice();
+    this.ctrl=buildVoice(T,this.instId,this.bus);    // 主手语音
+    this.ctrl2=buildVoice(T,this.instId,this.bus);   // 副手语音（独立模式下双手可同时发声）
+    this.gl.main.on=this.gl.sec.on=false; this.gl.main.note=this.gl.sec.note=null;
+  },
+  disposeVoice(){
+    for(const v of [this.ctrl,this.ctrl2]) if(v){ v.nodes.forEach(n=>{ try{n.dispose();}catch(e){} }); }
+    this.ctrl=null; this.ctrl2=null;
+  },
+  _voice(who){ return who==='sec'?this.ctrl2:this.ctrl; },
+  setInstrument(id){ if(!INST_META.some(m=>m.id===id)) return; this.glideEnd(); this.instId=id; if(this.isDrums()) this.mode='hit'; this.ensureVoice(); this.syncUI(); },
+  setMode(m){ if(m!=='hit'&&m!=='glide') return; this.glideEnd(); if(this.isDrums()) m='hit'; this.mode=m; this.syncUI(); },
+  setScale(id){ if(!SCALES[id]) return; this.scaleId=id; this.notes=buildScale(ROOT_MIDI,SCALES[id].s,10); this.syncUI(); },
+  cycleInstrument(){ const ids=INST_META.map(m=>m.id); this.setInstrument(ids[(ids.indexOf(this.instId)+1)%ids.length]); },
+  cycleScale(){ const ids=Object.keys(SCALES); this.setScale(ids[(ids.indexOf(this.scaleId)+1)%ids.length]); },
+  metaName(){ const m=INST_META.find(x=>x.id===this.instId); return m?m.n:''; },
+  /* 试听：用当前音色/音阶弹一段固定动机，便于不挥手就横向对比音色区分度 */
+  audition(){
+    if(!window.Tone) return;
+    const v=this._voice('main'); if(!v) return;
+    const t0=window.Tone.now()+0.04;
+    const seq=this.isDrums()?['底鼓','军鼓','闭镲','军鼓','通鼓','开镲']
+      : [this.notes[0],this.notes[2],this.notes[4],this.notes[2],this.notes[4],this.notes[Math.min(7,this.notes.length-1)]];
+    seq.forEach((l,i)=>{ v.hit(l,0.9,t0+i*0.17); });
+  },
+  /* 离散击打（who: main 主手 / sec 副手，各走独立语音可同时响） */
+  trigger(label,who='main'){ this.show(label,who==='main'); const v=this._voice(who); if(v&&window.Tone) v.hit(label,0.85+Math.random()*0.1,window.Tone.now()+0.01); },
+  /* 连续滑音（特雷门）：捏住起音、移动换音高、捏合度 r 控音量、松开止音；按手分离 */
+  glideBegin(label,who='main'){ const g=this.gl[who]; g.on=true; g.note=label; this.show(label,who==='main'); const v=this._voice(who); if(v&&window.Tone) v.begin(label,window.Tone.now()); },
+  glideMove(label,r,who='main'){ const g=this.gl[who]; if(!g.on) return; const v=this._voice(who);
+    if(label!==g.note){ g.note=label; this.show(label,false); if(v) v.move(label,r,window.Tone.now()); }
+    else if(v&&v.expr) v.expr(r,window.Tone.now());
+  },
+  glideEnd(who){ // 不传 who=两只手全部止音（切应用/丢手时）
+    const list=who?[who]:['main','sec'];
+    for(const w of list){ const g=this.gl[w]; if(g.on){ const v=this._voice(w); if(v&&window.Tone) v.end(window.Tone.now()); } g.on=false; g.note=null; }
+  },
+  show(label,pushSeq){
+    noteBig.textContent=label;
+    noteBig.classList.remove('pop'); void noteBig.offsetWidth; noteBig.classList.add('pop');
+    if(pushSeq){ this.seq.push(label); if(this.seq.length>14) this.seq.shift(); seqEl.innerHTML=this.seq.map(n=>`<span>${n}</span>`).join(''); }
+  },
+  reset(){ this.glideEnd(); this.seq=[]; seqEl.innerHTML=''; noteBig.textContent='--'; },
+  syncUI(){ if(this._syncUI) this._syncUI(); }
+};
+/* 音色工厂：返回统一控制器 {id,nodes,hit,begin,move,end,expr} */
+function buildVoice(T,id,bus){
+  const {master,verb}=bus, nodes=[];
+  const reg=n=>{ nodes.push(n); return n; };
+  const shift=(note,semi)=>{ try{ return T.Frequency(note).transpose(semi).toNote(); }catch(e){ return note; } };
+  // 起音噪声层：击弦/气息/弓毛等"声学瞬态"，是区分真乐器与合成器的关键
+  function noiseTick(o){
+    const f=reg(new T.Filter(o.freq,o.ftype||'highpass')); f.connect(o.dest);
+    const ns=reg(new T.NoiseSynth({noise:{type:o.type||'white'},
+      envelope:{attack:0.001,decay:o.decay||0.06,sustain:0,release:0.04},volume:o.vol}));
+    ns.connect(f); return ns;
+  }
+  // 揉弦效果节点（起音后渐入的小幅音高波动，弦乐/吹管用）
+  function vibrato(freq,depth,dest){ const v=reg(new T.Vibrato({frequency:freq,depth:depth,type:'sine',maxDelay:0.006}));
+    try{ v.start(); }catch(e){} v.connect(dest); return v; }
+  // 包络类单音乐器通用控制器（支持连续滑音 / 起音噪声 / 自定义离散时长 / 移调）
+  function monoVoice(s,baseVol,opt={}){
+    if(typeof opt==='number') opt={transpose:opt}; // 兼容旧的第三参=移调半音
+    const tr=opt.transpose||0, nn=note=>tr?shift(note,tr):note;
+    const expr=(r,t)=>{ s.volume.rampTo(baseVol+exprDb(r),0.05); };
+    const tick=t=>{ if(opt.tick) try{ opt.tick.triggerAttackRelease(opt.tickDur||'32n',t); }catch(e){} };
+    return { id,nodes,
+      hit:(note,vel,t)=>{ s.triggerAttackRelease(nn(note),opt.hitDur||'8n',t,vel); tick(t); },
+      begin:(note,t)=>{ s.volume.value=baseVol; s.triggerAttack(nn(note),t); tick(t); },
+      move:(note,r,t)=>{ s.frequency.rampTo(T.Frequency(nn(note)).toFrequency(),0.07); expr(r,t); },
+      end:(t)=>{ try{s.triggerRelease(t);}catch(e){} },
+      expr };
+  }
+  switch(id){
+    case 'crystal': { // 卡林巴琴：三角波软槌 + 回声，干声打底，短而清透
+      const delay=reg(new T.FeedbackDelay('8n.',0.3)); delay.wet.value=0.22; delay.connect(master);
+      const s=reg(new T.Synth({oscillator:{type:'triangle'},envelope:{attack:0.002,decay:0.3,sustain:0.08,release:0.35}}));
+      s.volume.value=-9; s.connect(master); s.connect(delay);
+      return monoVoice(s,-9,{hitDur:'8n'});
+    }
+    case 'pluck': { // 拨弦：Karplus-Strong 物理模型（唯一非振荡器，天然原声）
+      const s=reg(new T.PluckSynth({attackNoise:0.9,dampening:3600,resonance:0.97,release:1.1}));
+      s.volume.value=-9; s.connect(verb);
+      return { id,nodes,
+        hit:(note,vel,t)=>s.triggerAttack(note,t,vel),
+        begin:(note,t)=>s.triggerAttack(note,t),
+        move:(note,r,t)=>s.triggerAttack(note,t),
+        end:()=>{}, expr:()=>{} };
+    }
+    case 'bell': { // 钟琴：非整数谐波比+高调制指数+2.4s 长尾，明显泛音钟摆声
+      const s=reg(new T.FMSynth({harmonicity:3.49,modulationIndex:14,oscillator:{type:'sine'},
+        envelope:{attack:0.001,decay:2.4,sustain:0,release:2.2},modulation:{type:'sine'}}));
+      s.volume.value=-13; s.connect(verb);
+      const c=monoVoice(s,-13,{hitDur:'2n'}); return c;
+    }
+    case 'pad': { // 氛围铺底：最慢起音(0.45s)的 AM，柔和膨胀，空间感靠长尾混响
+      const s=reg(new T.AMSynth({oscillator:{type:'sawtooth'},modulation:{type:'sine'},harmonicity:1.5,
+        envelope:{attack:0.45,decay:0.6,sustain:0.72,release:2.2}}));
+      s.volume.value=-16; s.portamento=0.2; s.connect(verb);
+      return monoVoice(s,-16,{hitDur:'1n'});
+    }
+    case 'bass': { // 低频贝斯：三角波（去锯齿毛刺）+低通压暗+低八度，圆润底鼓感，干声
+      const s=reg(new T.MonoSynth({oscillator:{type:'triangle'},filter:{Q:1.2,type:'lowpass',rolloff:-24,frequency:430},
+        envelope:{attack:0.005,decay:0.18,sustain:0.55,release:0.22},
+        filterEnvelope:{attack:0.005,decay:0.2,sustain:0.4,release:0.5,baseFrequency:90,octaves:2.2}}));
+      s.volume.value=-8; s.connect(master); return monoVoice(s,-8,{transpose:-12,hitDur:'8n'});
+    }
+    case 'musicbox': { // 八音盒：高谐波比但低调制指数（不刺耳）+极短衰减+机械拨片咔哒声，干声
+      const s=reg(new T.FMSynth({harmonicity:5.4,modulationIndex:3.5,oscillator:{type:'triangle'},
+        envelope:{attack:0.001,decay:0.4,sustain:0,release:0.4},modulation:{type:'sine'}}));
+      s.volume.value=-14; s.connect(master);
+      const tick=noiseTick({freq:6000,type:'white',decay:0.02,vol:-26,dest:master});
+      return monoVoice(s,-14,{hitDur:'16n',tick,tickDur:'32n'});
+    }
+    case 'strings': { // 弦乐群：锯齿压到 1.1k 低通+5Hz 揉音+合唱展宽+慢弓起音，连绵弓弦
+      const ch=reg(new T.Chorus({frequency:1.6,delayTime:3.5,depth:0.6,wet:0.7})); ch.start(); ch.connect(verb);
+      const vib=vibrato(5,0.06,ch);
+      const s=reg(new T.MonoSynth({oscillator:{type:'sawtooth'},filter:{Q:0.8,type:'lowpass',rolloff:-24,frequency:1100},
+        envelope:{attack:0.22,decay:0.3,sustain:0.8,release:0.7},
+        filterEnvelope:{attack:0.2,decay:0.4,sustain:0.55,release:0.8,baseFrequency:220,octaves:1.8}}));
+      s.volume.value=-11; s.portamento=0.16; s.connect(vib); return monoVoice(s,-11,{hitDur:'2n'});
+    }
+    case 'chip': { // 芯片方波：故意保留的 8-bit 电子味，干声快衰减，作为"电子锚点"反差
+      const s=reg(new T.Synth({oscillator:{type:'square'},envelope:{attack:0.003,decay:0.09,sustain:0.18,release:0.14}}));
+      s.volume.value=-12; s.connect(master);
+      return monoVoice(s,-12,{hitDur:'16n'});
+    }
+    case 'organ': { // 拉杆风琴：加法合成三正弦（8/4/12 尺栓）+轻颤音，持续不断，干声
+      const trem=reg(new T.Tremolo({frequency:4.2,depth:0.16})); try{trem.start();}catch(e){} trem.connect(master);
+      const legs=[[0,-7],[12,-13],[19,-17]].map(([sm,vol])=>{
+        const o=reg(new T.Synth({oscillator:{type:'sine'},envelope:{attack:0.03,decay:0.08,sustain:0.9,release:0.45}}));
+        o.volume.value=vol; o.connect(trem); return {sm,o}; });
+      return { id,nodes,
+        hit:(note,vel,t)=>legs.forEach(L=>L.o.triggerAttackRelease(shift(note,L.sm),'8n',t,vel)),
+        begin:(note,t)=>legs.forEach(L=>L.o.triggerAttack(shift(note,L.sm),t)),
+        move:(note,r,t)=>legs.forEach(L=>L.o.frequency.rampTo(T.Frequency(shift(note,L.sm)).toFrequency(),0.07)),
+        end:(t)=>legs.forEach(L=>{try{L.o.triggerRelease(t);}catch(e){}}),
+        expr:(r)=>legs.forEach(L=>L.o.volume.rampTo(([-7,-13,-17][legs.indexOf(L)])+exprDb(r),0.05)) };
+    }
+    case 'metal': { // 金属锣钵：MetalSynth 非谐泛音，偏干、短余韵，区别于钟琴的长尾
+      const s=reg(new T.MetalSynth({harmonicity:5.1,modulationIndex:24,resonance:2600,octaves:1.3,
+        envelope:{attack:0.001,decay:0.7,sustain:0.04,release:0.4}}));
+      s.volume.value=-20; s.connect(master);
+      const c=monoVoice(s,-20,{hitDur:'4n'}); return c;
+    }
+    case 'lead': { // 失真主音：故意保留的电子锚点，锯齿→失真，穿透 solo
+      const dist=reg(new T.Distortion({distortion:0.32,wet:0.5,oversample:'4x'})); dist.connect(master);
+      const s=reg(new T.MonoSynth({oscillator:{type:'sawtooth'},filter:{Q:1.4,type:'lowpass',rolloff:-24,frequency:1800},
+        envelope:{attack:0.008,decay:0.18,sustain:0.55,release:0.32},
+        filterEnvelope:{attack:0.008,decay:0.22,sustain:0.5,release:0.6,baseFrequency:260,octaves:3}}));
+      s.volume.value=-12; s.connect(dist); return monoVoice(s,-12);
+    }
+    case 'flute': { // 竹笛吹管：三角波+带通共振+4.6Hz 揉音+粉色气息噪声层，近原声吹管
+      const vib=vibrato(4.6,0.055,verb);
+      const s=reg(new T.MonoSynth({oscillator:{type:'triangle'},filter:{Q:2,type:'bandpass',rolloff:-24,frequency:1500},
+        envelope:{attack:0.07,decay:0.2,sustain:0.85,release:0.3},
+        filterEnvelope:{attack:0.08,decay:0.2,sustain:0.7,release:0.4,baseFrequency:600,octaves:1.6}}));
+      s.volume.value=-10; s.connect(vib);
+      const breath=noiseTick({freq:1200,ftype:'bandpass',type:'pink',decay:0.14,vol:-23,dest:verb});
+      return monoVoice(s,-10,{hitDur:'4n',tick:breath,tickDur:'16n'});
+    }
+    case 'epiano': { // Rhodes 电钢：1:1 谐波+低调制指数(温暖)+调制器快衰减+钢琴式包络，Phaser 轻染，干声
+      const ph=reg(new T.Phaser({frequency:0.5,octaves:2.5,baseFrequency:800,wet:0.32})); ph.connect(master);
+      const s=reg(new T.FMSynth({harmonicity:1,modulationIndex:2.2,oscillator:{type:'sine'},
+        envelope:{attack:0.002,decay:1.8,sustain:0.12,release:1.2},
+        modulation:{type:'sine'},modulationEnvelope:{attack:0.001,decay:0.5,sustain:0,release:0.5}}));
+      s.volume.value=-11; s.connect(ph);
+      return monoVoice(s,-11,{hitDur:'4n'});
+    }
+    case 'drums': {
+      const kick=reg(new T.MembraneSynth({pitchDecay:0.06,octaves:5,envelope:{attack:0.001,decay:0.35,sustain:0,release:0.4},volume:-5})); kick.connect(master);
+      const tom =reg(new T.MembraneSynth({pitchDecay:0.15,octaves:3,envelope:{attack:0.001,decay:0.25,sustain:0,release:0.2},volume:-8})); tom.connect(master);
+      const snF=reg(new T.Filter(2800,'bandpass')); snF.connect(master);
+      const snare=reg(new T.NoiseSynth({noise:{type:'pink'},envelope:{attack:0.001,decay:0.13,sustain:0,release:0.05},volume:-11})); snare.connect(snF);
+      const hF=reg(new T.Filter(7500,'highpass')); hF.connect(master);
+      const hat=reg(new T.NoiseSynth({noise:{type:'white'},envelope:{attack:0.001,decay:0.05,sustain:0,release:0.03},volume:-14})); hat.connect(hF);
+      const ohat=reg(new T.NoiseSynth({noise:{type:'white'},envelope:{attack:0.001,decay:0.22,sustain:0,release:0.1},volume:-13})); ohat.connect(hF);
+      return { id,nodes,
+        hit:(label,vel,t)=>{
+          if(label==='底鼓') kick.triggerAttackRelease('C1','8n',t,vel);
+          else if(label==='通鼓') tom.triggerAttackRelease('G1','16n',t,vel);
+          else if(label==='军鼓') snare.triggerAttackRelease('16n',t,vel);
+          else if(label==='闭镲') hat.triggerAttackRelease('32n',t,vel*0.8);
+          else ohat.triggerAttackRelease('8n',t,vel*0.8);
+        },
+        begin:()=>{},move:()=>{},end:()=>{},expr:()=>{} };
+    }
+  }
+}
+// 捏合程度 r → 音量增量（dB）：捏越紧越响，范围 -14~0 dB
+function exprDb(r){ const k=1-clamp((r-CFG.pinchEnter)/(CFG.pinchExit-CFG.pinchEnter),0,1); return -14*(1-k); }
+/* 乐器库选择器 UI */
+(function initInstUI(){
+  const instPick=$('instPick'), modePick=$('modePick'), scalePick=$('scalePick');
+  const instInfo=$('instInfo'), instTip=$('instTip'), scaleBox=$('scaleBox'), stageTip=$('stageTip');
+  INST_META.forEach((m,i)=>{
+    const b=document.createElement('button'); b.className='pick'; b.dataset.inst=m.id;
+    b.textContent=INST_KEYS[i]?`${m.n}(${INST_KEYS[i]})`:m.n;
+    b.addEventListener('click',()=>{ Instrument.setInstrument(m.id); Instrument.unlock().then(()=>setTimeout(()=>Instrument.audition(),130)).catch(()=>{}); });
+    instPick.appendChild(b);
+  });
+  const btnAud=$('btnAudition');
+  if(btnAud) btnAud.addEventListener('click',()=>{ Instrument.unlock().then(()=>Instrument.audition()).catch(()=>{}); });
+  Object.entries(SCALES).forEach(([id,s])=>{
+    const b=document.createElement('button'); b.className='pick'; b.dataset.scale=id; b.textContent=s.n;
+    b.addEventListener('click',()=>Instrument.setScale(id)); scalePick.appendChild(b);
+  });
+  modePick.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>Instrument.setMode(b.dataset.mode)));
+  Instrument._syncUI=()=>{
+    instPick.querySelectorAll('button').forEach(b=>b.classList.toggle('active',b.dataset.inst===Instrument.instId));
+    modePick.querySelectorAll('button').forEach(b=>b.classList.toggle('active',b.dataset.mode===Instrument.mode));
+    scalePick.querySelectorAll('button').forEach(b=>b.classList.toggle('active',b.dataset.scale===Instrument.scaleId));
+    scaleBox.hidden=Instrument.isDrums();
+    const meta=INST_META.find(m=>m.id===Instrument.instId);
+    instTip.textContent=meta.tip;
+    if(stageTip){
+      stageTip.textContent=Instrument.isDrums()?'空气鼓组：纵向 5 区（开镲/闭镲/军鼓/通鼓/底鼓），捏合=击打'
+        : Instrument.mode==='glide'?'连续滑音：捏住发声·上下滑音·捏紧更响·松开止音'
+        : `${meta.n}：上下选音（上高下低），捏合=弹一个音（${SCALES[Instrument.scaleId].n}）`;
+    }
+    if(Instrument.isDrums()) instInfo.innerHTML='纵向 5 个打击区（上→下）：<b>开镲 · 闭镲 · 军鼓 · 通鼓 · 底鼓</b><br>捏合=击打一下，越靠下声音越低沉';
+    else if(Instrument.mode==='glide') instInfo.innerHTML=`音色：<b>${meta.n}</b> · ${SCALES[Instrument.scaleId].n}<br><b>捏住</b>持续发声，上下移动滑音，<b>捏越紧音量越大</b>，松开止音`;
+    else instInfo.innerHTML=`音色：<b>${meta.n}</b> · ${SCALES[Instrument.scaleId].n}：${Instrument.notes.join(' ')}<br>纵向越靠<b>上</b>音越高（${Instrument.notes.length} 个条带），捏合=弹一个音`;
+  };
+  Instrument.syncUI();
+})();
+
+/* ---------- 12. Paint：发光粒子画笔 / 换色 / 清屏 / 保存 / 回放 ---------- */
+const PALETTE=[
+  {c:'#ff5c8a',n:'霓虹粉'},{c:'#ffb347',n:'暖橙'},{c:'#f6f661',n:'柠黄'},{c:'#7dff9b',n:'荧光绿'},
+  {c:'#5ce1ff',n:'青蓝'},{c:'#7d8cff',n:'蓝紫'},{c:'#d37dff',n:'品紫'},{c:'#ffffff',n:'纯白'}
+];
+// HSL→HEX / HEX→HSL 颜色工具（光谱取色用）
+function hslToHex(h,s,l){
+  h=((h%360)+360)%360; s=clamp(s,0,1); l=clamp(l,0,1);
+  const c=(1-Math.abs(2*l-1))*s, x=c*(1-Math.abs((h/60)%2-1)), m=l-c/2;
+  let r,g,b;
+  if(h<60)[r,g,b]=[c,x,0]; else if(h<120)[r,g,b]=[x,c,0]; else if(h<180)[r,g,b]=[0,c,x];
+  else if(h<240)[r,g,b]=[0,x,c]; else if(h<300)[r,g,b]=[x,0,c]; else [r,g,b]=[c,0,x];
+  const to=v=>Math.round((v+m)*255).toString(16).padStart(2,'0');
+  return ('#'+to(r)+to(g)+to(b)).toUpperCase();
+}
+function hexToHsl(hex){
+  const n=parseInt(hex.slice(1),16); const r=(n>>16&255)/255,g=(n>>8&255)/255,b=(n&255)/255;
+  const mx=Math.max(r,g,b),mn=Math.min(r,g,b),l=(mx+mn)/2;
+  if(mx===mn) return {h:0,s:0,l};
+  const d=mx-mn, s=l>.5?d/(2-mx-mn):d/(mx+mn);
+  let h; if(mx===r)h=((g-b)/d+(g<b?6:0)); else if(mx===g)h=(b-r)/d+2; else h=(r-g)/d+4;
+  return {h:h*60,s,l};
+}
+// 由 hex 派生明暗/饱和变体（3D 笔刷做高光与暗面用）；hexToHsl 的 s/l 为 0~1
+function shadeHsl(hex,dl,ds=0){
+  try{ const {h,s,l}=hexToHsl(hex);
+    return `hsl(${Math.round(h)},${Math.round(clamp(s*100+ds,0,100))}%,${Math.round(clamp(l*100+dl,0,100))}%)`;
+  }catch(e){ return hex; }
+}
+// 画笔库：全部为"由相邻点确定性生成"的即时笔刷，可持久化、可回放、无实时物理循环
+const BRUSHES=[
+  {id:'neon',  n:'霓虹光带'},{id:'spray', n:'喷雾星尘'},{id:'ribbon',n:'双层丝带'},
+  {id:'bubble',n:'泡泡'},{id:'star',   n:'十字星光'},{id:'rainbow',n:'彩虹流'},{id:'ember',n:'火星迸溅'},
+  {id:'tube3d',n:'立体光管'},{id:'orb3d',n:'3D光球'},{id:'ribbon3d',n:'扭转缎带'},{id:'extrude',n:'立体挤出'},
+  {id:'bead3d',n:'金属串珠'},{id:'gel3d',n:'凝胶囊体'},{id:'helix3d',n:'螺旋光管'},{id:'prism3d',n:'棱面晶体'},{id:'depth3d',n:'景深浮粒'}
+];
+const Paint={
+  colorIdx:0, custom:null,
+  brushId:'neon',
+  strokes:[], points:0,
+  // 双手双笔：每只手独立一笔（cur/last/drawing/pathLen），cur/drawing 镜像主手以兼容旧接口
+  slots:{main:{cur:null,last:null,drawing:false,pathLen:0},sec:{cur:null,last:null,drawing:false,pathLen:0}},
+  get drawing(){ return this.slots.main.drawing||this.slots.sec.drawing; },
+  get cur(){ return this.slots.main.cur; },
+  pick:{h:340,s:1,l:.65,sat:1}, // 光谱选择位置（内部状态）
+  fistMs:0, palmMs:0, firedHold:false,   // 保持手势计时，一次保持只触发一次
+  replaying:false, rp:{s:0,p:0},
+  color(){ return this.custom ?? PALETTE[this.colorIdx].c; },
+  brushName(){ return (BRUSHES.find(b=>b.id===this.brushId)||BRUSHES[0]).n; },
+  initUI(){
+    const row=$('paletteRow');
+    PALETTE.forEach((p,i)=>{
+      const d=document.createElement('span'); d.className='pal'; d.style.background=p.c; d.title=p.n;
+      d.addEventListener('click',()=>this.setColor(i));
+      row.appendChild(d);
+    });
+    const brow=$('brushRow');
+    BRUSHES.forEach((b,i)=>{
+      const d=document.createElement('button'); d.className='pick'; d.textContent=b.n; d.title='快捷键 B 循环';
+      d.addEventListener('click',()=>this.setBrush(i));
+      brow.appendChild(d);
+    });
+    this.initPicker();
+    this.refreshUI();
+    $('btnColor').addEventListener('click',()=>this.cycleColor());
+    $('btnUndo').addEventListener('click',()=>this.undo());
+    $('btnClear').addEventListener('click',()=>this.requestClear());
+    $('btnSave').addEventListener('click',()=>this.save());
+    $('btnReplay').addEventListener('click',()=>this.startReplay());
+  },
+  /* 光谱取色板：横向=色相，纵向=明暗（上白下黑），另配饱和度滑条 */
+  initPicker(){
+    try{
+      const cv=$('specCanvas'), sat=$('satRange'), satVal=$('satVal');
+      cv.width=300; cv.height=108;
+      const pctx2=cv.getContext('2d'), W=cv.width, H=cv.height;
+      const draw=()=>{
+        const hue=pctx2.createLinearGradient(0,0,W,0);
+        [[0,'#f00'],[1/6,'#ff0'],[2/6,'#0f0'],[3/6,'#0ff'],[4/6,'#00f'],[5/6,'#f0f'],[1,'#f00']].forEach(([p,c])=>hue.addColorStop(p,c));
+        pctx2.fillStyle=hue; pctx2.fillRect(0,0,W,H);
+        const white=pctx2.createLinearGradient(0,0,0,H);
+        white.addColorStop(0,'rgba(255,255,255,1)'); white.addColorStop(.5,'rgba(255,255,255,0)'); white.addColorStop(1,'rgba(0,0,0,1)');
+        pctx2.fillStyle=white; pctx2.fillRect(0,0,W,H);
+        // 选中点标记
+        const px=this.pick.h/360*W, py=(1-this.pick.l)*H;
+        pctx2.lineWidth=2; pctx2.strokeStyle='#fff'; pctx2.beginPath(); pctx2.arc(px,py,6,0,Math.PI*2); pctx2.stroke();
+        pctx2.strokeStyle='rgba(0,0,0,.7)'; pctx2.beginPath(); pctx2.arc(px,py,8,0,Math.PI*2); pctx2.stroke();
+      };
+      const pickFrom=(e)=>{
+        const r=cv.getBoundingClientRect();
+        this.pick.h=clamp((e.clientX-r.left)/r.width,0,1)*360;
+        this.pick.l=1-clamp((e.clientY-r.top)/r.height,0,1);
+        this.pick.sat=sat.value/100;
+        this.setCustom(hslToHex(this.pick.h,this.pick.sat,this.pick.l));
+        draw();
+      };
+      let dragging=false;
+      cv.addEventListener('pointerdown',e=>{dragging=true;cv.setPointerCapture(e.pointerId);pickFrom(e);});
+      cv.addEventListener('pointermove',e=>{if(dragging)pickFrom(e);});
+      cv.addEventListener('pointerup',()=>dragging=false);
+      cv.addEventListener('pointercancel',()=>dragging=false);
+      sat.addEventListener('input',()=>{ satVal.textContent=sat.value+'%'; this.pick.sat=sat.value/100; this.setCustom(hslToHex(this.pick.h,this.pick.sat,this.pick.l)); });
+      draw(); this._redrawPicker=draw; // 首次绘制成功才注册重绘（桩/老环境失败则静默降级）
+    }catch(e){ console.warn('光谱取色板初始化失败：',e); }
+  },
+  refreshUI(){
+    const c=this.color();
+    const label=this.custom?('自选 '+this.custom):(PALETTE[this.colorIdx].n+' '+PALETTE[this.colorIdx].c);
+    $('swatch').style.background=c; $('colorName').textContent=label;
+    document.querySelectorAll('.pal').forEach((el,i)=>el.classList.toggle('sel',!this.custom&&i===this.colorIdx));
+    document.querySelectorAll('#brushRow .pick').forEach((el,i)=>el.classList.toggle('active',BRUSHES[i].id===this.brushId));
+    $('paintStats').textContent=`笔画 ${this.strokes.length} · 采样点 ${this.points} · ${this.brushName()}`;
+  },
+  setBrush(i){ this.brushId=BRUSHES[i].id; this.refreshUI(); },
+  cycleBrush(){ const i=BRUSHES.findIndex(b=>b.id===this.brushId); this.setBrush((i+1)%BRUSHES.length); },
+  setCustom(hex){ this.custom=hex; this.refreshUI(); },
+  setColor(i){
+    this.custom=null; this.colorIdx=i;
+    const hsl=hexToHsl(PALETTE[i].c); this.pick.h=hsl.h; this.pick.l=hsl.l; this.pick.sat=hsl.s;
+    const sat=$('satRange'); if(sat){ sat.value=Math.round(hsl.s*100); $('satVal').textContent=sat.value+'%'; }
+    if(this._redrawPicker) this._redrawPicker();
+    this.refreshUI();
+  },
+  cycleColor(){ this.setColor((this.colorIdx+1)%PALETTE.length); },
+  /* ============ 画笔渲染引擎（持久层，'lighter' 叠加出霓虹感） ============ */
+  _glowOn(c){ pctx.globalCompositeOperation='lighter'; pctx.shadowColor=c; },
+  _glowOff(){ pctx.globalAlpha=1; pctx.shadowBlur=0; pctx.globalCompositeOperation='source-over'; },
+  // 发光实心点（多笔刷共用）
+  dot(x,y,c,r=3.2,blur=14){
+    this._glowOn(c); pctx.fillStyle=c; pctx.shadowBlur=blur;
+    pctx.beginPath(); pctx.arc(x,y,r,0,Math.PI*2); pctx.fill(); this._glowOff();
+  },
+  // 彩虹笔刷：色相沿笔画累计长度推进（回放同路径可复现）
+  rainbowHue(who='main'){ return (this.slots[who].pathLen*1.6)%360; },
+  // 起笔印章
+  stamp(x,y,c,who='main'){
+    const b=this.brushId;
+    if(b==='spray'||b==='ember'){ for(let i=0;i<6;i++) this._emitDot(x,y,c,b); }
+    else if(b==='bubble'){ this._bubble(x,y,c); }
+    else if(b==='star'){ this._star(x,y,c); }
+    else if(b==='orb3d'){ this._orb(x,y,c); }
+    else if(b==='bead3d'){ this._bead(x,y,c); }
+    else if(b==='prism3d'){ this._prism(x,y,c); }
+    else if(b==='gel3d'){ this._gelBlob(x,y,c); }
+    else if(b==='depth3d'){ this.dot(x,y,c,2.4,8); }
+    else if(b==='helix3d'){ this._stamp3d(x,y,c,'tube3d'); }
+    else if(b==='tube3d'||b==='ribbon3d'){ this._stamp3d(x,y,c,b); }
+    else if(b==='extrude'){ // 挤出起笔：斜向堆叠暗面再盖顶面
+      pctx.lineCap='round';
+      for(let k=4;k>=1;k--){ pctx.strokeStyle=shadeHsl(c,-9*k); pctx.lineWidth=6;
+        pctx.beginPath(); pctx.moveTo(x+k*1.4,y+k*1.8); pctx.lineTo(x+k*1.4+1,y+k*1.8); pctx.stroke(); }
+      this.dot(x,y,c,3,8);
+    }
+    else this.dot(x,y,c); // neon / ribbon / rainbow
+  },
+  // 3D 起笔小圆头（暗边+主体+偏左上高光）
+  _stamp3d(x,y,c,b){
+    pctx.globalCompositeOperation='source-over'; pctx.lineCap='round';
+    pctx.strokeStyle=shadeHsl(c,-26); pctx.lineWidth=b==='tube3d'?10:7; pctx.shadowColor=c; pctx.shadowBlur=8;
+    pctx.beginPath(); pctx.moveTo(x,y); pctx.lineTo(x+0.6,y+0.6); pctx.stroke();
+    pctx.strokeStyle=c; pctx.lineWidth=b==='tube3d'?6.5:4;
+    pctx.beginPath(); pctx.moveTo(x,y); pctx.lineTo(x+0.5,y+0.5); pctx.stroke();
+    pctx.strokeStyle=shadeHsl(c,30); pctx.lineWidth=1.8;
+    pctx.beginPath(); pctx.moveTo(x-1.2,y-1.2); pctx.lineTo(x-0.7,y-0.7); pctx.stroke();
+    this._glowOff();
+  },
+  // 3D 光球：非同心径向渐变（偏左上高光→本色→暗边）
+_orb(x,y,c){
+    const r=6.5; let fill=c;
+    try{
+      const g=pctx.createRadialGradient(x-r*.32,y-r*.32,0.4,x,y,r);
+      g.addColorStop(0,shadeHsl(c,42)); g.addColorStop(.38,c); g.addColorStop(1,shadeHsl(c,-30));
+      fill=g;
+    }catch(e){ fill=c; } // 老环境/桩环境降级为实心
+    pctx.globalCompositeOperation='source-over';
+    pctx.fillStyle=fill; pctx.shadowColor=c; pctx.shadowBlur=10;
+    pctx.beginPath(); pctx.arc(x,y,r,0,Math.PI*2); pctx.fill();
+    this._glowOff();
+  },
+  // 金属串珠：白色高光芯→亮面→本色→暗边，金属受感
+  _bead(x,y,c){
+    const r=5; let fill=c;
+    try{
+      const g=pctx.createRadialGradient(x-r*.38,y-r*.38,.2,x,y,r);
+      g.addColorStop(0,'#ffffff'); g.addColorStop(.28,shadeHsl(c,44));
+      g.addColorStop(.68,c); g.addColorStop(1,shadeHsl(c,-34)); fill=g;
+    }catch(e){ fill=c; }
+    pctx.globalCompositeOperation='source-over';
+    pctx.fillStyle=fill; pctx.shadowColor=c; pctx.shadowBlur=8;
+    pctx.beginPath(); pctx.arc(x,y,r,0,Math.PI*2); pctx.fill(); this._glowOff();
+  },
+  // 凝胶囊体：大半径柔边半透明叠加，相邻颗粒融合成软 3D 胶体
+  _gelBlob(x,y,c){
+    pctx.globalCompositeOperation='source-over'; pctx.lineCap='round';
+    pctx.globalAlpha=.32; pctx.fillStyle=c; pctx.shadowColor=c; pctx.shadowBlur=16;
+    pctx.beginPath(); pctx.arc(x,y,9,0,Math.PI*2); pctx.fill();
+    pctx.globalAlpha=.55; pctx.shadowBlur=8;
+    pctx.beginPath(); pctx.arc(x,y,4.2,0,Math.PI*2); pctx.fill();
+    pctx.globalAlpha=1; this._glowOff();
+  },
+  // 棱面晶体：菱形沿对角线劈成亮/暗两个切面 + 中脊高光线
+  _prism(x,y,c){
+    const r=6;
+    pctx.globalCompositeOperation='source-over'; pctx.shadowColor=c; pctx.shadowBlur=7;
+    pctx.fillStyle=shadeHsl(c,30); // 左亮面
+    pctx.beginPath(); pctx.moveTo(x,y-r); pctx.lineTo(x-r,y); pctx.lineTo(x,y+r); pctx.closePath(); pctx.fill();
+    pctx.fillStyle=shadeHsl(c,-26); // 右暗面
+    pctx.beginPath(); pctx.moveTo(x,y-r); pctx.lineTo(x+r,y); pctx.lineTo(x,y+r); pctx.closePath(); pctx.fill();
+    pctx.strokeStyle=shadeHsl(c,48); pctx.lineWidth=1;
+    pctx.beginPath(); pctx.moveTo(x,y-r); pctx.lineTo(x,y+r); pctx.stroke();
+    this._glowOff();
+  },
+  // 相邻点之间画一步（who 区分主/副手的彩虹相位）
+  step(x1,y1,x2,y2,c,who='main'){
+    const b=this.brushId, mx=(x1+x2)/2, my=(y1+y2)/2;
+    this._glowOn(c);
+    if(b==='neon'){
+      pctx.strokeStyle=c; pctx.lineWidth=5; pctx.lineCap='round'; pctx.shadowBlur=14;
+      pctx.beginPath(); pctx.moveTo(x1,y1); pctx.lineTo(x2,y2); pctx.stroke();
+      for(let i=0;i<2;i++) this._emitDot(mx,my,c,'spray');
+    }else if(b==='spray'){
+      const d=Math.hypot(x2-x1,y2-y1), n=Math.round(clamp(d*.9,2,9));
+      for(let i=0;i<n;i++){ const t=Math.random(); this._emitDot(x1+(x2-x1)*t,y1+(y2-y1)*t,c,'spray'); }
+    }else if(b==='ribbon'){
+      pctx.lineCap='round'; pctx.lineJoin='round';
+      pctx.globalAlpha=.22; pctx.strokeStyle=c; pctx.lineWidth=9; pctx.shadowBlur=12;
+      pctx.beginPath(); pctx.moveTo(x1,y1); pctx.lineTo(x2,y2); pctx.stroke();
+      pctx.globalAlpha=1; pctx.strokeStyle=c; pctx.lineWidth=2.6; pctx.shadowBlur=10;
+      pctx.beginPath(); pctx.moveTo(x1,y1); pctx.lineTo(x2,y2); pctx.stroke();
+      pctx.strokeStyle='#ffffff'; pctx.lineWidth=1; pctx.shadowBlur=6;
+      pctx.beginPath(); pctx.moveTo(x1,y1); pctx.lineTo(x2,y2); pctx.stroke();
+    }else if(b==='bubble'){
+      pctx.strokeStyle=c; pctx.lineWidth=1.4; pctx.shadowBlur=6;
+      const d=Math.hypot(x2-x1,y2-y1), n=Math.max(1,Math.round(d/12));
+      for(let i=0;i<n;i++){ const t=Math.random(); this._bubble(x1+(x2-x1)*t,y1+(y2-y1)*t,c); }
+    }else if(b==='star'){
+      pctx.strokeStyle=c; pctx.lineWidth=1.6; pctx.shadowBlur=8; pctx.fillStyle=c;
+      const d=Math.hypot(x2-x1,y2-y1), n=Math.max(1,Math.round(d/16));
+      for(let i=0;i<n;i++){ const t=Math.random(); this._star(x1+(x2-x1)*t,y1+(y2-y1)*t,c); }
+    }else if(b==='rainbow'){
+      const h=this.rainbowHue(who), rc=`hsl(${h},100%,62%)`;
+      pctx.strokeStyle=rc; pctx.lineWidth=5; pctx.lineCap='round'; pctx.shadowColor=rc; pctx.shadowBlur=14;
+      pctx.beginPath(); pctx.moveTo(x1,y1); pctx.lineTo(x2,y2); pctx.stroke();
+      pctx.fillStyle=rc;
+      for(let i=0;i<2;i++){ pctx.globalAlpha=.3+Math.random()*.4; pctx.beginPath();
+        pctx.arc(mx+(Math.random()-.5)*7,my+(Math.random()-.5)*7,.8+Math.random()*2.2,0,Math.PI*2); pctx.fill(); }
+    }else if(b==='ember'){
+      const n=5;
+      for(let i=0;i<n;i++){ const t=Math.random(); this._ember(x1+(x2-x1)*t,y1+(y2-y1)*t,c); }
+    }else if(b==='tube3d'){ // 立体光管：暗面宽底→主体→左上偏移高光，圆柱体积感
+      pctx.globalCompositeOperation='source-over'; pctx.lineCap='round'; pctx.lineJoin='round'; pctx.shadowBlur=10;
+      const line=(sx,sy,w,col)=>{ pctx.strokeStyle=col; pctx.lineWidth=w;
+        pctx.beginPath(); pctx.moveTo(x1+sx,y1+sy); pctx.lineTo(x2+sx,y2+sy); pctx.stroke(); };
+      line(0,0,10,shadeHsl(c,-26));
+      line(0,0,6.5,c);
+      line(-1.5,-1.5,2,shadeHsl(c,30));
+    }else if(b==='orb3d'){ // 3D 光球：沿线等距铺立体小球（确定性，回放一致）
+      const d=Math.hypot(x2-x1,y2-y1), n=Math.max(1,Math.round(d/13));
+      for(let i=1;i<=n;i++){ const t=i/n; this._orb(x1+(x2-x1)*t,y1+(y2-y1)*t,c); }
+    }else if(b==='ribbon3d'){ // 扭转缎带：宽度与明暗按位置周期翻转，模拟缎带翻面
+      pctx.globalCompositeOperation='source-over'; pctx.lineCap='round'; pctx.lineJoin='round'; pctx.shadowBlur=8;
+      const ph=(mx+my)*0.05, w=3+3.5*(0.5+0.5*Math.sin(ph));
+      pctx.strokeStyle=Math.cos(ph)>=0?shadeHsl(c,20):shadeHsl(c,-22); pctx.lineWidth=w;
+      pctx.beginPath(); pctx.moveTo(x1,y1); pctx.lineTo(x2,y2); pctx.stroke();
+      pctx.strokeStyle=c; pctx.lineWidth=1;
+      pctx.beginPath(); pctx.moveTo(x1,y1); pctx.lineTo(x2,y2); pctx.stroke();
+    }else if(b==='extrude'){ // 立体挤出：斜向逐层暗面+顶面+高光
+      pctx.globalCompositeOperation='source-over'; pctx.lineCap='round'; pctx.lineJoin='round'; pctx.shadowBlur=6;
+      for(let k=5;k>=1;k--){ pctx.strokeStyle=shadeHsl(c,-8*k); pctx.lineWidth=6;
+        pctx.beginPath(); pctx.moveTo(x1+k*1.4,y1+k*1.8); pctx.lineTo(x2+k*1.4,y2+k*1.8); pctx.stroke(); }
+      pctx.strokeStyle=c; pctx.lineWidth=6;
+      pctx.beginPath(); pctx.moveTo(x1,y1); pctx.lineTo(x2,y2); pctx.stroke();
+      pctx.strokeStyle=shadeHsl(c,32); pctx.lineWidth=1.5;
+      pctx.beginPath(); pctx.moveTo(x1-1,y1-1); pctx.lineTo(x2-1,y2-1); pctx.stroke();
+    }else if(b==='bead3d'){ // 金属串珠：等距铺金属小球
+      const d=Math.hypot(x2-x1,y2-y1), n=Math.max(1,Math.round(d/10));
+      for(let i=1;i<=n;i++){ const t=i/n; this._bead(x1+(x2-x1)*t,y1+(y2-y1)*t,c); }
+    }else if(b==='gel3d'){ // 凝胶囊体：密铺柔边颗粒融合
+      const d=Math.hypot(x2-x1,y2-y1), n=Math.max(1,Math.round(d/6));
+      for(let i=1;i<=n;i++){ const t=i/n; this._gelBlob(x1+(x2-x1)*t,y1+(y2-y1)*t,c); }
+    }else if(b==='helix3d'){ // 螺旋光管：高光沿法向按位置相位绕管旋转
+      pctx.globalCompositeOperation='source-over'; pctx.lineCap='round'; pctx.lineJoin='round'; pctx.shadowBlur=10;
+      const dx=x2-x1,dy=y2-y1,d=Math.hypot(dx,dy)||1,nx=-dy/d,ny=dx/d;
+      const ph=(x1+y1)*0.09, off=3*Math.sin(ph);
+      const line=(sx,sy,w,col)=>{ pctx.strokeStyle=col; pctx.lineWidth=w;
+        pctx.beginPath(); pctx.moveTo(x1+sx,y1+sy); pctx.lineTo(x2+sx,y2+sy); pctx.stroke(); };
+      line(0,0,9,shadeHsl(c,-26)); line(0,0,5.5,c); line(nx*off,ny*off,1.8,shadeHsl(c,38));
+    }else if(b==='prism3d'){ // 棱面晶体：等距铺切面菱形
+      const d=Math.hypot(x2-x1,y2-y1), n=Math.max(1,Math.round(d/13));
+      for(let i=1;i<=n;i++){ const t=i/n; this._prism(x1+(x2-x1)*t,y1+(y2-y1)*t,c); }
+    }else if(b==='depth3d'){ // 景深浮粒：相位驱动大小/透明度/亮度，模拟远近漂浮（确定性伪抖动）
+      const d=Math.hypot(x2-x1,y2-y1), n=Math.max(2,Math.round(d/5));
+      for(let i=0;i<n;i++){
+        const t=(i+.5)/n, px=x1+(x2-x1)*t, py=y1+(y2-y1)*t;
+        const jit=Math.sin((px*12.9898+py*78.233+i)*0.05), z=.5+.5*Math.sin((px+py)*0.05+jit);
+        const jx=Math.sin(px*.7+i*2.1)*4, jy=Math.cos(py*.7+i*1.7)*4;
+        pctx.globalCompositeOperation='lighter'; pctx.globalAlpha=.22+z*.6;
+        pctx.fillStyle=shadeHsl(c,-10+z*34); pctx.shadowColor=c; pctx.shadowBlur=z*12;
+        pctx.beginPath(); pctx.arc(px+jx,py+jy,1.4+z*4.2,0,Math.PI*2); pctx.fill();
+        pctx.globalAlpha=1;
+      }
+    }
+    this._glowOff();
+  },
+  _emitDot(x,y,c,kind){ // 喷雾点（围绕落点随机偏移）
+    const R=kind==='ember'?6:10;
+    pctx.globalAlpha=.15+Math.random()*.55; pctx.fillStyle=c; pctx.shadowBlur=5;
+    pctx.beginPath();
+    pctx.arc(x+(Math.random()-.5)*R,y+(Math.random()-.5)*R,.6+Math.random()*1.8,0,Math.PI*2); pctx.fill();
+    pctx.globalAlpha=1;
+  },
+  _bubble(x,y,c){ // 空心圆环
+    const r=3+Math.random()*5;
+    pctx.globalAlpha=.55; pctx.strokeStyle=c; pctx.shadowBlur=6;
+    pctx.beginPath(); pctx.arc(x,y,r,0,Math.PI*2); pctx.stroke(); pctx.globalAlpha=1;
+  },
+  _star(x,y,c){ // 十字星光
+    const r=4+Math.random()*5;
+    pctx.globalAlpha=.9; pctx.strokeStyle=c; pctx.shadowBlur=8; pctx.lineWidth=1.5;
+    pctx.beginPath(); pctx.moveTo(x-r,y); pctx.lineTo(x+r,y); pctx.moveTo(x,y-r); pctx.lineTo(x,y+r); pctx.stroke();
+    pctx.strokeStyle='#fff'; pctx.lineWidth=.8;
+    pctx.beginPath(); pctx.moveTo(x-r*.5,y); pctx.lineTo(x+r*.5,y); pctx.moveTo(x,y-r*.5); pctx.lineTo(x,y+r*.5); pctx.stroke();
+    pctx.globalAlpha=1;
+  },
+  _ember(x,y,c){ // 火星：沿随机方向的短亮线
+    const a=Math.random()*Math.PI*2, v=1.5+Math.random()*5;
+    pctx.globalAlpha=.45+Math.random()*.4; pctx.strokeStyle=c; pctx.lineWidth=1.6; pctx.shadowBlur=8;
+    pctx.beginPath(); pctx.moveTo(x,y); pctx.lineTo(x-Math.cos(a)*v,y-Math.sin(a)*v); pctx.stroke();
+    pctx.globalAlpha=1;
+  },
+  beginStroke(x,y,who='main'){
+    const s=this.slots[who]; s.drawing=true; s.pathLen=0;
+    s.cur={color:this.color(),brush:this.brushId,pts:[[x,y]]};
+    this.strokes.push(s.cur);
+    this.stamp(x,y,s.cur.color,who); s.last={x,y};
+    this.refreshUI();
+  },
+  move(x,y,who='main'){
+    const s=this.slots[who]; if(!s.drawing) return;
+    s.cur.pts.push([x,y]); this.points++;
+    s.pathLen+=Math.hypot(x-s.last.x,y-s.last.y);
+    this.step(s.last.x,s.last.y,x,y,s.cur.color,who);
+    s.last={x,y};
+  },
+  endStroke(who){ // 不传 who=两只手全部抬笔
+    const list=who?[who]:['main','sec'];
+    for(const w of list){ const s=this.slots[w]; s.drawing=false; s.last=null; s.cur=null; }
+  },
+  clearLayer(){ pctx.clearRect(0,0,CFG.stageW,CFG.stageH); },
+  clear(){ // 清空且删除记录
+    this.clearLayer(); this.strokes=[]; this.points=0; this.endStroke(); this.stopReplay(); this.refreshUI();
+  },
+  requestClear(){
+    if(this.strokes.length===0){ showToast('画布还是空的'); return; }
+    if(window.confirm('确定清空整张画布吗？此操作无法撤销。')){ this.clear(); showToast('画布已清空'); }
+  },
+  redraw(){
+    this.clearLayer();
+    const brushBak=this.brushId;
+    for(const st of this.strokes){
+      if(!st.pts.length) continue;
+      this.brushId=st.brush||'neon';
+      const rs=this.slots.main; rs.pathLen=0;
+      const first=st.pts[0]; this.stamp(first[0],first[1],st.color,'main');
+      for(let i=1;i<st.pts.length;i++){
+        const a=st.pts[i-1],b=st.pts[i];
+        rs.pathLen+=Math.hypot(b[0]-a[0],b[1]-a[1]);
+        this.step(a[0],a[1],b[0],b[1],st.color,'main');
+      }
+    }
+    this.brushId=brushBak; this.refreshUI();
+  },
+  undo(){
+    if(this.replaying) this.stopReplay();
+    const st=this.strokes.pop();
+    if(!st){ showToast('还没有可以撤销的笔画'); return; }
+    this.points=Math.max(0,this.points-Math.max(0,st.pts.length-1));
+    this.endStroke(); this.redraw(); showToast('已撤销上一笔');
+  },
+  save(){
+    if(this.strokes.length===0){ showToast('先画一点内容，再保存作品'); return; }
+    const out=document.createElement('canvas'); out.width=CFG.stageW; out.height=CFG.stageH;
+    const g=out.getContext('2d');
+    g.fillStyle='#02060d'; g.fillRect(0,0,out.width,out.height);
+    g.drawImage(paintCanvas,0,0);
+    const a=document.createElement('a');
+    a.download='air-pod-paint-'+new Date().toISOString().replace(/[.:]/g,'-')+'.png';
+    a.href=out.toDataURL('image/png'); a.click(); showToast('PNG 已保存到下载文件夹');
+  },
+  startReplay(){
+    if(this.strokes.length===0||this.replaying) return;
+    this.clearLayer(); this.endStroke();
+    this._brushBak=this.brushId;
+    this.replaying=true; this.rp={s:0,p:0};
+  },
+  stopReplay(){
+    this.replaying=false;
+    if(this._brushBak){ this.brushId=this._brushBak; this._brushBak=null; this.refreshUI(); }
+  },
+  stepReplay(){ // 每帧推进若干采样点，笔画间断处自动抬笔
+    if(!this.replaying) return;
+    for(let k=0;k<4;k++){
+      const st=this.strokes[this.rp.s];
+      if(!st){ this.stopReplay(); this.refreshUI(); return; }
+      const pt=st.pts[this.rp.p], c=st.color; // 笔画直接存颜色值与画笔（支持自选色/多画笔回放）
+      this.brushId=st.brush||'neon';
+      const rs=this.slots.main;
+      if(this.rp.p===0){ rs.pathLen=0; this.stamp(pt[0],pt[1],c,'main'); }
+      else{ const pv=st.pts[this.rp.p-1];
+        rs.pathLen+=Math.hypot(pt[0]-pv[0],pt[1]-pv[1]);
+        this.step(pv[0],pv[1],pt[0],pt[1],c,'main'); }
+      this.rp.p++;
+      if(this.rp.p>=st.pts.length){ this.rp.s++; this.rp.p=0; }
+    }
+  },
+  resetAll(){ this.clear(); this.setColor(0); this.setBrush(0); }
+};
+
+/* ---------- 13. 骨架层（原始坐标，CSS 镜像） ---------- */
+function drawSkeleton(result){
+  const w=skelCanvas.width,h=skelCanvas.height;
+  sctx.clearRect(0,0,w,h);
+  if(!showSkel.checked) return;
+  (result.landmarks||[]).forEach(lm=>{
+    sctx.strokeStyle='#22e6ff'; sctx.lineWidth=3; sctx.shadowColor='rgba(34,230,255,.7)'; sctx.shadowBlur=6; sctx.beginPath();
+    HAND_CONNECTIONS.forEach(([a,b])=>{ sctx.moveTo(lm[a].x*w,lm[a].y*h); sctx.lineTo(lm[b].x*w,lm[b].y*h); });
+    sctx.stroke();
+    lm.forEach((p,i)=>{
+      sctx.beginPath(); sctx.arc(p.x*w,p.y*h,i%4===0?4:2.5,0,Math.PI*2);
+      sctx.fillStyle=i%4===0?'#ffffff':'#8ff4ff'; sctx.fill();
+    });
+  });
+}
+
+/* ---------- 14. 覆盖层（屏幕坐标，不镜像）：条带/光标/进度环/手势提示 ---------- */
+// 按下锁位按手分离：main 主手 / sec 副手（独立模式双手各锁各的）
+const locks={main:{x:null,y:null},sec:{x:null,y:null}};
+// 双手配合模式：split=分工（副手切功能，B），dual=独立（双手各自弹奏/作画，A）
+let dualMode='split';
+const ripples=[];
+let pressCount=0, releaseCount=0;
+let holdLabel='', holdProgress=0;   // 握拳/张掌保持反馈（0~1）
+function drawOverlay(now){
+  const W=CFG.stageW,H=CFG.stageH;
+  octx.clearRect(0,0,W,H);
+  const visible=hand.present||(now-hand.lostAt<CFG.freezeMs);
+
+  if(app==='instrument'&&showBands.checked){
+    const bands=Instrument.bands();
+    const bh=H/bands.length;
+    for(let i=0;i<bands.length;i++){
+      const top=H-(i+1)*bh;
+      const cy = hand.pinch==='pinched'&&locks.main.y!==null?locks.main.y:hand.y;
+      const cursorIdx=visible?Instrument.bandAt(cy).idx:-1;
+      const secY=hand2.present&&dualMode==='dual'?(hand2.pinch==='pinched'&&locks.sec.y!==null?locks.sec.y:hand2.y):null;
+      const cursorIdx2=secY!==null?Instrument.bandAt(secY).idx:-2;
+      octx.fillStyle=i===cursorIdx?'rgba(120,180,255,.30)':(i===cursorIdx2?'rgba(255,77,157,.22)':(i%2?'rgba(34,230,255,.07)':'rgba(34,230,255,.03)'));
+      octx.fillRect(0,top,W,bh);
+      octx.strokeStyle='rgba(255,255,255,.12)'; octx.beginPath(); octx.moveTo(0,top); octx.lineTo(W,top); octx.stroke();
+      octx.fillStyle=i===cursorIdx?'#ffffff':'rgba(255,255,255,.55)'; octx.font='13px Consolas,Microsoft YaHei'; octx.fillText(bands[i],8,top+bh-8);
+    }
+  }
+  if(!visible) return;
+
+  const cx=hand.pinch==='pinched'&&locks.main.x!==null?locks.main.x:hand.x;
+  const cy=hand.pinch==='pinched'&&locks.main.y!==null?locks.main.y:hand.y;
+  const px=cx*W, py=cy*H;
+
+  if(showLink.checked&&hand.p4){
+    octx.lineWidth=3; octx.strokeStyle=hand.pinch==='pinched'?'#ff4d9d':'#37ecff';
+    octx.beginPath(); octx.moveTo(hand.p4.x*W,hand.p4.y*H); octx.lineTo(hand.p8.x*W,hand.p8.y*H); octx.stroke();
+  }
+  for(let i=ripples.length-1;i>=0;i--){
+    const age=now-ripples[i].t0;
+    if(age>420){ ripples.splice(i,1); continue; }
+    octx.strokeStyle=`rgba(255,119,200,${1-age/420})`; octx.lineWidth=2;
+    octx.beginPath(); octx.arc(ripples[i].x*W,ripples[i].y*H,10+age/14,0,Math.PI*2); octx.stroke();
+  }
+
+  // 光标颜色：乐器=青/品红；绘画=当前画笔色
+  const ringColor = app==='paint' ? Paint.color() : '#37ecff';
+  octx.beginPath(); octx.arc(px,py,hand.pinch==='pinched'?11:15,0,Math.PI*2);
+  if(hand.pinch==='pinched'){ octx.fillStyle=app==='paint'?ringColor:'#ff4d9d'; octx.fill(); }
+  else{ octx.lineWidth=3; octx.strokeStyle=ringColor; octx.stroke(); }
+  octx.beginPath(); octx.arc(px,py,2.5,0,Math.PI*2); octx.fillStyle='#fff'; octx.fill();
+
+  // 副手电标：分工=品红虚线环+蓄力环；独立=与主手同权的实环第二光标
+  if(hand2.present){
+    const lk=locks.sec;
+    let qx=hand2.x*W, qy=hand2.y*H;
+    if(hand2.pinch==='pinched'&&lk.x!==null){ qx=lk.x*W; qy=lk.y*H; }
+    const pinched2=hand2.pinch==='pinched';
+    octx.save();
+    if(dualMode==='dual'){
+      const c2=app==='paint'?Paint.color():'#37ecff';
+      octx.beginPath(); octx.arc(qx,qy,pinched2?11:15,0,Math.PI*2);
+      if(pinched2){ octx.fillStyle=app==='paint'?c2:'#ff4d9d'; octx.shadowColor=c2; octx.shadowBlur=8; octx.fill(); octx.shadowBlur=0; }
+      else{ octx.lineWidth=3; octx.strokeStyle=c2; octx.stroke(); }
+      octx.beginPath(); octx.arc(qx,qy,2.5,0,Math.PI*2); octx.fillStyle='#fff'; octx.fill();
+      if(app==='paint'&&hand2.pointing&&hand2.pinch==='open'){ // 副手落笔小十字
+        octx.strokeStyle=c2; octx.lineWidth=2;
+        octx.beginPath(); octx.moveTo(qx-8,qy);octx.lineTo(qx-4,qy);octx.moveTo(qx+4,qy);octx.lineTo(qx+8,qy);
+        octx.moveTo(qx,qy-8);octx.lineTo(qx,qy-4);octx.moveTo(qx,qy+4);octx.lineTo(qx,qy+8); octx.stroke();
+      }
+    }else{
+      octx.setLineDash([5,4]); octx.lineWidth=2;
+      octx.strokeStyle=pinched2?'#ff4d9d':'rgba(255,77,157,.75)';
+      octx.shadowColor='#ff4d9d'; octx.shadowBlur=pinched2?10:4;
+      octx.beginPath(); octx.arc(qx,qy,pinched2?9:13,0,Math.PI*2); octx.stroke();
+      octx.setLineDash([]); octx.shadowBlur=0;
+      if(SecondHand.prog>0&&SecondHand.prog<1){ // 握拳蓄力环
+        octx.strokeStyle='#ffb3d1'; octx.lineWidth=3;
+        octx.beginPath(); octx.arc(qx,qy,22,-Math.PI/2,-Math.PI/2+Math.PI*2*SecondHand.prog); octx.stroke();
+      }
+    }
+    octx.fillStyle='#ff4d9d'; octx.font='bold 11px Consolas';
+    octx.fillText('2',qx+15,qy-12);
+    octx.restore();
+  }
+  // 副手动作浮字（持续 1s）
+  if(now-SecondHand.flashT<1000&&SecondHand.flashText){
+    const qx=hand2.x*W, qy=hand2.y*H;
+    octx.save();
+    octx.fillStyle='#ff4d9d'; octx.font='bold 14px Microsoft YaHei'; octx.textAlign='center';
+    octx.shadowColor='#ff4d9d'; octx.shadowBlur=8;
+    octx.fillText(SecondHand.flashText,qx,qy-26);
+    octx.restore();
+  }
+
+  // 绘画模式：落笔状态小十字 + 保持手势进度环
+  if(app==='paint'){
+    if(hand.pointing&&hand.pinch==='open'){
+      octx.strokeStyle=ringColor; octx.lineWidth=2;
+      octx.beginPath(); octx.moveTo(px-8,py);octx.lineTo(px-4,py); octx.moveTo(px+4,py);octx.lineTo(px+8,py);
+      octx.moveTo(px,py-8);octx.lineTo(px,py-4); octx.moveTo(px,py+4);octx.lineTo(px,py+8); octx.stroke();
+    }
+    if(holdProgress>0){
+      octx.strokeStyle='#ffd24a'; octx.lineWidth=4;
+      octx.beginPath(); octx.arc(px,py,26,-Math.PI/2,-Math.PI/2+Math.PI*2*holdProgress); octx.stroke();
+      octx.fillStyle='#ffd24a'; octx.font='bold 13px Microsoft YaHei'; octx.textAlign='center';
+      octx.fillText(holdLabel,px,py-32); octx.textAlign='left';
+    }
+  }
+}
+
+/* ---------- 15. 标定条 + HUD ---------- */
+function drawCalib(){
+  const w=calibCanvas.width,h=calibCanvas.height;
+  cctx.clearRect(0,0,w,h); cctx.fillStyle='#0a0a0a'; cctx.fillRect(0,0,w,h);
+  const maxR=1.1, xOf=r=>(r/maxR)*w;
+  cctx.fillStyle='rgba(255,200,80,.18)';
+  cctx.fillRect(xOf(CFG.pinchEnter),0,xOf(CFG.pinchExit)-xOf(CFG.pinchEnter),h);
+  const line=(r,color,label)=>{ cctx.strokeStyle=color;cctx.lineWidth=2;cctx.beginPath();cctx.moveTo(xOf(r),0);cctx.lineTo(xOf(r),h);cctx.stroke();cctx.fillStyle=color;cctx.font='12px Consolas';cctx.fillText(label,xOf(r)+3,13); };
+  line(CFG.pinchEnter,'#37ecff','in'); line(CFG.pinchExit,'#ffd27d','out');
+  if(hand.present){
+    cctx.fillStyle=hand.pinch==='pinched'?'#ff4d9d':'#9fe8ff';
+    cctx.beginPath(); cctx.arc(xOf(clamp(hand.ratio,0,maxR)),h/2,8,0,Math.PI*2); cctx.fill();
+    cctx.fillStyle='#fff'; cctx.font='bold 13px Consolas';
+    cctx.fillText('r='+hand.ratio.toFixed(3),xOf(clamp(hand.ratio,0,maxR))+12,h-8);
+  }
+}
+let lastHudTs=0;
+function drawHud(now){
+  if(app==='paint'){
+    stateBadge.textContent = !hand.present&&now-hand.lostAt>=CFG.freezeMs?'未检测到手'
+      : `绘画 · ${hand.gesture==='None'?(hand.pointing?'落笔中':'抬笔'):hand.gesture} · ${Paint.custom?'自选色':PALETTE[Paint.colorIdx].n}`;
+  }else{
+    stateBadge.textContent = !hand.present&&now-hand.lostAt>=CFG.freezeMs?'未检测到手'
+      : (hand.pinch==='pinched'?'● 捏合 / 弹奏中':'○ 张开 / 移动');
+  }
+  stateBadge.textContent+=' · '+(dualMode==='dual'?'双手独立':'双手分工');
+  if(hand2.present) stateBadge.textContent+=' · 已识别副手';
+  coordBadge.textContent=`x:${(hand.x*CFG.stageW).toFixed(0)} y:${(hand.y*CFG.stageH).toFixed(0)} · ${hand.detectFps.toFixed(0)}fps`;
+  if(now-lastHudTs<200) return;
+  lastHudTs=now;
+  pressCountEl.textContent=pressCount; releaseCountEl.textContent=releaseCount;
+  const hint=qualityHint();
+  readout.textContent=
+    `app=${app} gesture=${hand.gesture} pointing=${hand.pointing} pinch=${hand.pinch}\n`+
+    `raw=(${hand.rawX.toFixed(3)},${hand.rawY.toFixed(3)}) smooth=(${hand.x.toFixed(3)},${hand.y.toFixed(3)}) px=(${(hand.x*CFG.stageW).toFixed(1)},${(hand.y*CFG.stageH).toFixed(1)})\n`+
+    `r=${hand.ratio.toFixed(3)} enter=${CFG.pinchEnter.toFixed(2)} exit=${CFG.pinchExit.toFixed(2)} detect=${hand.detectFps.toFixed(1)}fps`+
+    ` 置信度=${hand.score===null?'-':hand.score.toFixed(2)} 手掌占比=${(Math.max(hand.bw,hand.bh)*100).toFixed(0)}% 丢帧=${(hand.lossPct*100).toFixed(0)}%${hint?'\n⚠ '+hint:''}`;
+}
+// 识别质量诊断：按优先级返回一条可执行建议
+function qualityHint(){
+  if(hand.lossPct>0.4) return '丢帧过多：开灯补光、让手和背景/衣袖拉开颜色对比';
+  if(!hand.present) return '';
+  if(hand.bw>0.8||hand.bh>0.85) return '手掌占画面过大，手离摄像头远一点';
+  if(hand.mnx<0.03||hand.mny<0.03||hand.mxx>0.97||hand.mxy>0.97) return '手贴近画面边缘，请整只手入镜并留边距';
+  if(hand.score!==null&&hand.score<0.75) return '置信度偏低：改善光照或正对摄像头';
+  return '';
+}
+
+/* ---------- 16. 绘画手势：保持计时（握拳清屏 / 张掌保存），在渲染相位更新 ---------- */
+function updatePaintGestures(dt){
+  holdLabel=''; holdProgress=0;
+  if(app!=='paint'||Paint.replaying){ Paint.fistMs=0; Paint.palmMs=0; Paint.firedHold=false; return; }
+  const g=hand.gesture, present=hand.present;
+  if(present&&g==='Closed_Fist'){
+    Paint.fistMs+=dt;
+    if(Paint.fistMs>=CFG.fistHoldMs){
+      if(!Paint.firedHold){ Paint.clear(); Paint.firedHold=true; showToast('画布已通过手势清空'); }
+      holdProgress=1;
+    }else{ holdProgress=Paint.fistMs/CFG.fistHoldMs; holdLabel='清屏中…'; }
+  }else if(present&&g==='Open_Palm'){
+    Paint.palmMs+=dt;
+    if(Paint.palmMs>=CFG.palmHoldMs){
+      if(!Paint.firedHold){ Paint.save(); Paint.firedHold=true; }
+      holdProgress=1;
+    }else{ holdProgress=Paint.palmMs/CFG.palmHoldMs; holdLabel='保存中…'; }
+  }else{ Paint.fistMs=0; Paint.palmMs=0; Paint.firedHold=false; }
+}
+
+/* ---------- 17b. 副手隔空功能（B 阶段）：只发离散指令，不碰主手操作 ----------
+   副手捏一下：乐器=循环音色，绘画=循环颜色
+   副手握拳保持 0.6s：乐器=循环音阶（鼓组禁用），绘画=循环画笔 */
+const SecondHand={
+  fistMs:0, fired:false, prog:0, flashText:'', flashT:-Infinity,
+  reset(){ this.fistMs=0; this.fired=false; this.prog=0; this.flashText=''; this.flashT=-Infinity; },
+  flash(txt){ this.flashText=txt; this.flashT=performance.now(); },
+  currentColorName(){ return Paint.custom?'自选色':PALETTE[Paint.colorIdx].n; },
+  update(dt,now){
+    this.prog=0;
+    if(!hand2.present){ this.fistMs=0; this.fired=false; return; }
+    if(hand2.pressEdge){
+      if(app==='instrument'){ Instrument.cycleInstrument(); this.flash('音色 → '+Instrument.metaName()); }
+      else { Paint.cycleColor(); this.flash('颜色 → '+this.currentColorName()); }
+    }
+    if(hand2.gesture==='Closed_Fist'){
+      this.fistMs+=dt;
+      if(this.fistMs>=CFG.fistHoldMs){
+        if(!this.fired){ this.fired=true; this.secondaryCycle(); }
+        this.prog=1;
+      }else this.prog=this.fistMs/CFG.fistHoldMs;
+    }else{ this.fistMs=0; this.fired=false; }
+  },
+  secondaryCycle(){
+    if(app==='instrument'){
+      if(Instrument.isDrums()){ this.flash('鼓组无音阶'); return; }
+      Instrument.cycleScale(); this.flash('音阶 → '+SCALES[Instrument.scaleId].n);
+    }else{
+      Paint.cycleBrush(); this.flash('画笔 → '+Paint.brushName());
+    }
+  }
+};
+
+/* ---------- 17. 主循环：检测相位写状态，渲染相位读状态 ---------- */
+let rafId=null, stream=null, running=false, lastVideoTime=-1, lastFrameTs=performance.now();
+let detectFrames=0, detectWinStart=performance.now();
+/* 双手配合模式切换：split 分工（默认，副手切功能）/ dual 独立（双手各弹各画） */
+function setDualMode(m){
+  if(m!=='split'&&m!=='dual') return;
+  dualMode=m;
+  dualSplitBtn.classList.toggle('active',m==='split');
+  dualDualBtn.classList.toggle('active',m==='dual');
+  dualSplitBtn.setAttribute('aria-pressed',String(m==='split'));
+  dualDualBtn.setAttribute('aria-pressed',String(m==='dual'));
+  Instrument.glideEnd('sec'); Paint.endStroke('sec');   // 切换瞬间收掉副手未完成的音/笔
+  locks.sec.x=locks.sec.y=null;
+}
+dualSplitBtn.addEventListener('click',()=>setDualMode('split'));
+dualDualBtn.addEventListener('click',()=>setDualMode('dual'));
+/* 一只手的乐器交互（按手独立：各自锁位、各自语音/滑音） */
+function handInteract(hd,who,now){
+  const isMain=who==='main';
+  const gliding=app==='instrument'&&Instrument.mode==='glide'&&!Instrument.isDrums();
+  if(hd.pressEdge){
+    if(isMain) pressCount++;
+    if(gliding){ locks[who].x=locks[who].y=null; Instrument.glideBegin(Instrument.bandAt(hd.y).label,who); }
+    else{
+      locks[who].x=hd.x; locks[who].y=hd.y;
+      if(isMain) ripples.push({x:hd.x,y:hd.y,t0:now});
+      if(app==='instrument') Instrument.trigger(Instrument.bandAt(hd.y).label,who);
+      else if(isMain) Paint.cycleColor(); // 独立模式副手捏合不换色，避免边画边跳色
+    }
+  }
+  if(hd.releaseEdge){ if(isMain) releaseCount++; locks[who].x=locks[who].y=null; if(app==='instrument') Instrument.glideEnd(who); }
+  if(gliding&&hd.present&&hd.pinch==='pinched') Instrument.glideMove(Instrument.bandAt(hd.y).label,hd.ratio,who);
+}
+/* 一只手的绘画交互（每只手独立一笔） */
+function paintInteract(hd,who){
+  const s=Paint.slots[who];
+  const want=hd.present&&hd.pointing&&hd.pinch==='open';
+  if(want){ const px=hd.x*CFG.stageW, py=hd.y*CFG.stageH; if(!s.drawing) Paint.beginStroke(px,py,who); else Paint.move(px,py,who); }
+  else if(s.drawing) Paint.endStroke(who);
+}
+function frame(now){
+  const dt=Math.min(64,now-lastFrameTs); lastFrameTs=now;
+  /* 检测相位 */
+  try{
+    if(video.readyState>=2&&video.currentTime!==lastVideoTime){
+      lastVideoTime=video.currentTime;
+      // 弱对比/昏暗场景：先在离屏画布做亮度/对比度增强，再把增强后画面送模型
+      let detectSource=video;
+      if(CFG.enhance){
+        proc2d.filter=`brightness(${CFG.brightness}) contrast(${CFG.contrast})`;
+        proc2d.drawImage(video,0,0,CFG.stageW,CFG.stageH);
+        proc2d.filter='none';
+        detectSource=procCanvas;
+      }
+      const res=recognizer.recognizeForVideo(detectSource,now);
+      drawSkeleton(res);
+      detectFrames++;
+      if(now-detectWinStart>=1000){ hand.detectFps=detectFrames*1000/(now-detectWinStart); detectFrames=0; detectWinStart=now; }
+      // 滚动 1s 丢帧率
+      qStat.frames++;
+      if(!qStat.start) qStat.start=now;
+      const lms=res.landmarks||[];
+      if(lms.length===0) qStat.lost++;
+      if(now-qStat.start>=1000){ qStat.pct=qStat.lost/qStat.frames; qStat.frames=0; qStat.lost=0; qStat.start=now; }
+      hand.lossPct=qStat.pct;
+      if(lms.length>0){
+        const {main,other}=Tracker.pickTwo(res);
+        if(!hand.present){ posSmoother.reset(); ratioSmoothed=null; PinchFSM.reset(); }
+        const lm=main.lm;
+        Tracker.lastWrist=lm[0];
+        const m=Tracker.measure(lm);
+        hand.present=true;
+        hand.rawX=m.rawX; hand.rawY=m.rawY; hand.p4=m.p4; hand.p8=m.p8; hand.pointing=m.pointing;
+        // 质量信息：模型置信度 + 手掌包围盒占比（判断手太近/贴边）
+        hand.score=(res.handedness&&res.handedness[main.idx]&&res.handedness[main.idx][0])?res.handedness[main.idx][0].score:null;
+        let mnx=1,mny=1,mxx=0,mxy=0;
+        for(const pt of lm){ mnx=Math.min(mnx,pt.x);mny=Math.min(mny,pt.y);mxx=Math.max(mxx,pt.x);mxy=Math.max(mxy,pt.y); }
+        hand.bw=mxx-mnx; hand.bh=mxy-mny; hand.mnx=mnx; hand.mny=mny; hand.mxx=mxx; hand.mxy=mxy;
+        hand.gesture=res.gestures&&res.gestures[main.idx]&&res.gestures[main.idx][0]
+          ? res.gestures[main.idx][0].categoryName : 'None';
+        posSmoother.alpha=CFG.alpha;
+        const p=posSmoother.push(m.rawX,m.rawY); hand.x=p.x; hand.y=p.y;
+        ratioSmoothed=ratioSmoothed===null?m.rawRatio:ratioSmoothed+CFG.ratioAlpha*(m.rawRatio-ratioSmoothed);
+        hand.ratio=ratioSmoothed;
+        const {edge}=PinchFSM.update(hand.ratio,now);
+        hand.pinch=PinchFSM.state;
+        if(edge==='press') hand.pressEdge=true;
+        if(edge==='release') hand.releaseEdge=true;
+        // —— 副手（第二只手）：独立平滑与捏合状态，仅用于显示 ——
+        if(other){
+          if(!hand2.present){ posSmoother2.reset(); ratioSmoothed2=null; PinchFSM2.reset(); }
+          Tracker.lastWrist2=other.lm[0];
+          const m2=Tracker.measure(other.lm);
+          hand2.present=true; hand2.pointing=m2.pointing;
+          posSmoother2.alpha=CFG.alpha;
+          const p2=posSmoother2.push(m2.rawX,m2.rawY); hand2.x=p2.x; hand2.y=p2.y;
+          ratioSmoothed2=ratioSmoothed2===null?m2.rawRatio:ratioSmoothed2+CFG.ratioAlpha*(m2.rawRatio-ratioSmoothed2);
+          hand2.ratio=ratioSmoothed2;
+          const e2=PinchFSM2.update(hand2.ratio,now); hand2.pinch=PinchFSM2.state;
+          hand2.pressEdge=e2.edge==='press'; hand2.releaseEdge=e2.edge==='release';
+          hand2.gesture=res.gestures&&res.gestures[other.idx]&&res.gestures[other.idx][0]
+            ? res.gestures[other.idx][0].categoryName : 'None';
+        }else if(hand2.present){ resetHand2(); }
+      }else if(hand.present){
+        hand.present=false; hand.lostAt=now; hand.gesture='None'; Tracker.reset(); Instrument.glideEnd();
+        if(hand2.present) resetHand2();
+      }
+    }
+  }catch(e){
+    running=false; console.error('检测相位出错：',e);
+    statusEl.textContent='识别出错已停止：'+(e.message||e);
+    cancelAnimationFrame(rafId); return;
+  }
+
+  /* 渲染相位 */
+  if(dualMode==='split') SecondHand.update(dt,now); // 分工：副手发功能指令；独立：副手走 handInteract
+  handInteract(hand,'main',now);
+  if(dualMode==='dual'&&hand2.present) handInteract(hand2,'sec',now);
+  else if(dualMode==='dual'&&!hand2.present){ Instrument.glideEnd('sec'); Paint.endStroke('sec'); locks.sec.x=locks.sec.y=null; }
+  hand.pressEdge=hand.releaseEdge=false;
+  hand2.pressEdge=hand2.releaseEdge=false;
+
+  if(app==='paint'){
+    if(Paint.replaying){ Paint.stepReplay(); }
+    else{
+      paintInteract(hand,'main');
+      if(dualMode==='dual'&&hand2.present) paintInteract(hand2,'sec');
+      else if(Paint.slots.sec.drawing) Paint.endStroke('sec'); // 非独立模式副手不画，兜底抬笔
+    }
+    updatePaintGestures(dt);
+  }
+  drawOverlay(now); drawCalib(); drawHud(now);
+  rafId=requestAnimationFrame(frame);
+}
+
+/* ---------- 18. 环境自检与错误中文化 ---------- */
+function setHint(html){ camHint.innerHTML='<div>'+html+'</div>'; }
+function envProblem(){
+  if(location.protocol==='file:') return 'file';
+  if(!window.isSecureContext) return 'insecure';
+  if(!(navigator.mediaDevices&&navigator.mediaDevices.getUserMedia)) return 'noapi';
+  return null;
+}
+function envHint(kind){
+  if(kind==='file') return '当前是<b>直接打开磁盘文件（file://）</b>，此模式浏览器禁止调用摄像头。<br>'+
+    '如果本地服务已经启动（双击过 bat 或已在后台运行），直接点下面按钮跳转：<br>'+
+    '<a href="http://localhost:8012/index.html" style="display:inline-block;margin:12px 0 6px;padding:10px 22px;background:#22e6ff;color:#04121d;font-weight:bold;text-decoration:none;border:1px solid #22e6ff;box-shadow:0 0 18px rgba(34,230,255,.6);font-size:15px;letter-spacing:1px;">▶ 打开 http://localhost:8012</a><br>'+
+    '若按钮打不开（服务没启动）：双击本文件夹的 <b>一键启动演示.bat</b>，或在文件夹内执行 <code>py -3 -m http.server 8012</code>，再用<b>系统 Chrome/Edge</b> 访问 <code>http://localhost:8012</code>。';
+  if(kind==='insecure') return '当前不是安全上下文（需 localhost 或 https），请改用 localhost 打开。';
+  if(kind==='noapi') return '当前浏览器不支持摄像头接口，请用最新版桌面 Chrome/Edge 通过 localhost 打开。';
+  return '';
+}
+function friendlyError(err){
+  const name=(err&&err.name)||'',msg=(err&&err.message)||name, head='启动失败：'+msg+'<br>';
+  if(['NotAllowedError','SecurityError','PermissionDeniedError'].includes(name))
+    return head+'摄像头权限被拒绝：① 用 <b>http://localhost</b> 而非 file://；② 地址栏左侧允许摄像头；③ 内置浏览器不弹授权时用<b>系统 Chrome/Edge</b>。';
+  if(['NotFoundError','DevicesNotFoundError','OverconstrainedError'].includes(name))
+    return head+'未找到可用摄像头，确认设备已连接、未被物理禁用。';
+  if(['NotReadableError','TrackStartError'].includes(name))
+    return head+'摄像头被其他程序占用，关闭会议/相机类软件后重试。';
+  if(/googleapis|模型|network|fetch|Tone/i.test(msg))
+    return head+'外部资源（模型/Tone.js/CDN）加载失败，需要可访问 jsdelivr、unpkg、googleapis 的网络。';
+  return head+'可按 F12 查看控制台；优先排查 localhost 打开、已授权摄像头、网络可加载模型。';
+}
+(function initCheck(){
+  const p=envProblem();
+  if(p){ setHint(envHint(p)); statusEl.textContent='环境不满足，无法开启'; startBtn.disabled=true; }
+  else setHint('<strong>让双手成为控制器</strong>点击「开启摄像头」并授权。识别在本机完成，首次会同时加载手势模型并解锁音频。');
+})();
+
+/* ---------- 19. 启动 / 停止 ---------- */
+let starting=false;
+async function start(){
+  if(starting||running) return;
+  const problem=envProblem();
+  if(problem){ camHint.style.display='flex'; setHint(envHint(problem)); statusEl.textContent='环境不满足'; return; }
+  starting=true; startBtn.disabled=true;
+  try{
+    statusEl.textContent='正在并行加载模型 / 音频引擎 / 摄像头…';
+    camHint.style.display='flex';
+    setHint('<strong>正在准备体感舞台</strong>首次加载模型可能需要几秒，请保持网络连接。<div class="loading-bar" aria-hidden="true"></div>');
+    const [,,cam]=await Promise.all([
+      recognizer?Promise.resolve(recognizer):buildRecognizer(),
+      Instrument.unlock().catch(e=>console.warn('音频解锁失败（仍可先用光标/绘画）：',e)),
+      navigator.mediaDevices.getUserMedia({video:{width:{ideal:640},height:{ideal:480},frameRate:{ideal:30}},audio:false})
+    ]);
+    stream=cam;
+    video.srcObject=stream; await video.play();
+    skelCanvas.width=overlay.width=CFG.stageW; skelCanvas.height=overlay.height=CFG.stageH;
+    paintCanvas.width=CFG.stageW; paintCanvas.height=CFG.stageH;
+    procCanvas.width=CFG.stageW; procCanvas.height=CFG.stageH;
+    if(Paint.strokes.length) Paint.redraw();
+    camHint.style.display='none';
+    running=true; lastVideoTime=-1;
+    posSmoother.reset(); ratioSmoothed=null; PinchFSM.reset(); Tracker.reset(); resetHand2(); SecondHand.reset();
+    qStat.frames=0;qStat.lost=0;qStat.start=0;qStat.pct=0;
+    Object.assign(hand,{present:false,lostAt:0,x:.5,y:.5,rawX:.5,rawY:.5,ratio:1,pinch:'open',gesture:'None',pointing:false,pressEdge:false,releaseEdge:false});
+    locks.main.x=locks.main.y=locks.sec.x=locks.sec.y=null; ripples.length=0; pressCount=0; releaseCount=0; Instrument.reset(); Paint.endStroke();
+    stopBtn.disabled=false;
+    statusEl.textContent='运行中 · 用顶部按钮切换乐器/绘画';
+    detectFrames=0; detectWinStart=performance.now(); lastFrameTs=performance.now();
+    rafId=requestAnimationFrame(frame);
+  }catch(err){
+    console.error(err); statusEl.textContent='启动失败';
+    camHint.style.display='flex'; setHint(friendlyError(err));
+    stopBtn.disabled=true;
+  }finally{ starting=false; startBtn.disabled=running; }
+}
+function stop(){
+  running=false; cancelAnimationFrame(rafId);
+  if(stream){ stream.getTracks().forEach(t=>t.stop()); stream=null; }
+  video.srcObject=null;
+  for(const c of [sctx,octx,cctx]) c.clearRect(0,0,CFG.stageW,CFG.stageH);
+  posSmoother.reset(); ratioSmoothed=null; PinchFSM.reset(); Tracker.reset(); resetHand2(); SecondHand.reset(); Paint.endStroke();
+  stateBadge.textContent='已停止'; coordBadge.textContent='x:- y:-'; readout.textContent='已停止。';
+  camHint.style.display='flex';
+  const p=envProblem(); setHint(p?envHint(p):'已停止，点击「开启摄像头」重新开始');
+  startBtn.disabled=!!p; stopBtn.disabled=true; statusEl.textContent='已停止';
+}
+startBtn.addEventListener('click',start);
+stopBtn.addEventListener('click',stop);
+
+/* ---------- 20. 快捷键：1/2 切应用，C/X/S/R 绘画操作 ---------- */
+document.addEventListener('keydown',e=>{
+  if(e.target.tagName==='INPUT') return;
+  const k=e.key.toLowerCase();
+  if(k==='1') setApp('instrument');
+  if(k==='2') setApp('paint');
+  if(k==='h') setDualMode(dualMode==='split'?'dual':'split');
+  if(app==='instrument'){
+    { const ki=INST_KEYS.indexOf(k); if(ki>=0&&INST_META[ki]){ Instrument.setInstrument(INST_META[ki].id);
+      Instrument.unlock().then(()=>setTimeout(()=>Instrument.audition(),130)).catch(()=>{}); } }
+    if(k==='a'){ Instrument.unlock().then(()=>Instrument.audition()).catch(()=>{}); }
+    if(k==='m') Instrument.setMode(Instrument.mode==='hit'?'glide':'hit');
+    if(k==='n'&&!Instrument.isDrums()){ const ids=Object.keys(SCALES); Instrument.setScale(ids[(ids.indexOf(Instrument.scaleId)+1)%ids.length]); }
+  }
+  if(app==='paint'){
+    if(k==='c') Paint.cycleColor();
+    if(k==='b') Paint.cycleBrush();
+    if(k==='z') Paint.undo();
+    if(k==='x') Paint.requestClear();
+    if(k==='s') Paint.save();
+    if(k==='r') Paint.startReplay();
+  }
+});
+// 兜底解锁音频
+document.addEventListener('pointerdown',()=>{ if(running&&window.Tone&&(!Instrument.ctrl||window.Tone.context.state!=='running')) Instrument.unlock().catch(()=>{}); });
+
+// 启动前先按舞台口径定好画布内部分辨率（start() 成功后会再设一次；避免未开摄像头/文件直开时画布停留在默认 300×150 裁切笔画）
+for(const c of [skelCanvas,paintCanvas,overlay,procCanvas]){ c.width=CFG.stageW; c.height=CFG.stageH; }
+Paint.initUI();
+setApp('instrument');
+
+/* ---------- 21. 弱场景增强控件绑定 ---------- */
+bindSlider('sDetect','vDetect','minDetect',v=>v.toFixed(2));
+bindSlider('sTrack','vTrack','minTrack',v=>v.toFixed(2));
+bindSlider('sContrast','vContrast','contrast',v=>v.toFixed(2));
+bindSlider('sBright','vBright','brightness',v=>v.toFixed(2));
+$('cEnhance').addEventListener('change',e=>{ CFG.enhance=e.target.checked; });
+$('cOneHand').addEventListener('change',async e=>{ CFG.numHands=e.target.checked?1:2; await applyModelChange(); });
+$('btnApplyModel').addEventListener('click',applyModelChange);
+async function applyModelChange(){
+  if(building) return;
+  statusEl.textContent='正在按新参数重建模型…';
+  try{
+    await buildRecognizer();
+    statusEl.textContent=running?'运行中 · 模型已按新参数重建':'模型参数已更新，开启后生效';
+  }catch(e){ console.error(e); statusEl.textContent='模型重建失败：'+(e.message||e); }
+}
+// 时钟
+setInterval(()=>{ const d=new Date(); $('clock').textContent=`${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`; },1000);
+</script>
+</body>
+</html>
