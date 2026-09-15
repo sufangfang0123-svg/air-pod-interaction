@@ -606,8 +606,8 @@ async function loadModel(){
     minTrackingConfidence:CFG.minTrack
   });
   const CDNS=[
-    'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/vision_bundle.mjs',
-    'https://unpkg.com/@mediapipe/tasks-vision@latest/vision_bundle.mjs'
+    'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@1.0.1/vision_bundle.mjs',
+    'https://unpkg.com/@mediapipe/tasks-vision@1.0.1/vision_bundle.mjs'
   ];
   let mod=null,wasm='';
   for(const url of CDNS){ try{ mod=await import(url); wasm=url.replace('vision_bundle.mjs','wasm'); break; }catch(e){ console.warn('CDN 失败，尝试备用：',url,e); } }
